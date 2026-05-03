@@ -228,14 +228,38 @@ function openLightbox(post) {
   mediaEl.innerHTML = '';
 
   if (ext === 'webm' || ext === 'mp4') {
+    const mimeType = ext === 'mp4' ? 'video/mp4' : 'video/webm';
     const vid = document.createElement('video');
-    vid.src = useUrl;
     vid.controls = true;
     vid.autoplay = true;
     vid.loop = true;
-    vid.muted = false;
+    vid.muted = true;
     vid.setAttribute('playsinline', '');
+    vid.style.maxWidth = '88vw';
+    vid.style.maxHeight = '70vh';
+    vid.style.borderRadius = 'var(--radius-lg)';
+
+    const src = document.createElement('source');
+    src.src = useUrl;
+    src.type = mimeType;
+    vid.appendChild(src);
+
+    vid.onerror = () => {
+      mediaEl.innerHTML = '';
+      if (post.sample_url) {
+        const img = document.createElement('img');
+        img.src = post.sample_url;
+        img.alt = `e621#${post.e621_id} (preview)`;
+        mediaEl.appendChild(img);
+      }
+      const notice = document.createElement('div');
+      notice.style.cssText = 'text-align:center;padding:12px;color:var(--text-muted);font-size:12px';
+      notice.innerHTML = `Vídeo não suportado neste navegador. <a href="${useUrl}" target="_blank" rel="noopener" style="color:var(--neon-cyan)">Abrir vídeo direto ↗</a>`;
+      mediaEl.after(notice);
+    };
+
     mediaEl.appendChild(vid);
+    vid.load();
   } else {
     const img = document.createElement('img');
     img.src = useUrl;
