@@ -98,7 +98,11 @@ def analyze_queue_composition(db: Session) -> dict:
 
     balance_ok = (
         total < settings.BALANCE_MIN_QUEUE_SIZE
-        or image_ratio <= settings.BALANCE_IMAGE_THRESHOLD
+        or (
+            image_ratio <= 0.70
+            and video_ratio >= 0.15
+            and gif_ratio >= 0.05
+        )
     )
 
     return {
@@ -149,74 +153,95 @@ async def _insert_posts(db: Session, posts_data: list[dict]) -> int:
 
 
 async def _refill_queue(db: Session) -> int:
-    """Reabastece a fila com inteligência de balanceamento de tipos de mídia."""
-    composition = analyze_queue_composition(db)
-
-    if not composition["balance_ok"]:
-        img_pct = composition["image_ratio"] * 100
-        logger.info(
-            "Queue is image-heavy (%.0f%% static). Triggering animated boost...",
-            img_pct,
-        )
-        _broadcast_sse({"event": "balance_boost", "image_ratio": composition["image_ratio"]})
-        return await _refill_animated(db)
-    else:
-        return await _refill_normal(db)
-
-
-async def _refill_normal(db: Session) -> int:
+    """Reabastece a fila com proporções-alvo: 60% imagens, 30% vídeos, 10% GIFs."""
     from app.tag_manager import build_query
-    from datetime import datetime, timezone
     custom_tags = build_query(db)
-    logger.info("Refilling queue — query: %s", custom_tags)
-    posts_data: list[dict] = []
+    comp = analyze_queue_composition(db)
+    logger.info(
+        "Queue composition: %d total | images=%.0f%% videos=%.0f%% gifs=%.0f%%",
+        comp["total"], comp["image_ratio"] * 100, comp["video_ratio"] * 100, comp["gif_ratio"] * 100,
+    )
+
+    _T_IMG = 0.60
+    _T_VID = 0.30
+    _T_GIF = 0.10
+    _BATCH = 100
+
+    target_img = int(_BATCH * _T_IMG)
+    target_vid = int(_BATCH * _T_VID)
+    target_gif = _BATCH - target_img - target_vid
+
+    need_img = max(0, target_img - comp["images"])
+    need_vid = max(0, target_vid - comp["videos"])
+    need_gif = max(0, target_gif - comp["gifs"])
+
+    logger.info("Targets — images: need %d, videos: need %d, gifs: need %d", need_img, need_vid, need_gif)
+    total_added = 0
+
+    # ── Imagens ──
+    if need_img > 0:
+        raw_posts = await _fetch_with_retry(custom_tags, limit=_BATCH)
+        static_only = [p for p in raw_posts if p.get("file", {}).get("ext", "").lower() in _STATIC_EXTS]
+        added = await _insert_posts(db, static_only[:need_img])
+        logger.info("Images: inserted %d", added)
+        total_added += added
+
+    # ── Vídeos (WebM) ──
+    if need_vid > 0:
+        await asyncio.sleep(1.2)
+        vid_posts = await _fetch_by_type_retry("webm", custom_tags, limit=max(need_vid * 2, 50))
+        added = await _insert_posts(db, vid_posts[:need_vid])
+        logger.info("Videos: inserted %d", added)
+        total_added += added
+
+    # ── GIFs ──
+    if need_gif > 0:
+        await asyncio.sleep(1.2)
+        gif_posts = await _fetch_by_type_retry("gif", custom_tags, limit=max(need_gif * 3, 30))
+        added = await _insert_posts(db, gif_posts[:need_gif])
+        logger.info("GIFs: inserted %d", added)
+        total_added += added
+
+    if total_added == 0:
+        logger.warning("Balanced refill inserted 0 posts — trying unrestricted image fetch")
+        raw_posts = await _fetch_with_retry(custom_tags, limit=_BATCH)
+        total_added = await _insert_posts(db, raw_posts)
+
+    logger.info("Balanced refill complete: %d posts added", total_added)
+    _broadcast_sse({"event": "refill_done", "added": total_added})
+    return total_added
+
+
+async def _fetch_with_retry(custom_tags: str, limit: int = 100) -> list[dict]:
     for attempt, page in enumerate(random.sample(range(1, 6), 5), start=1):
         try:
-            posts_data = await e621_client.fetch_posts(page=page, limit=settings.E621_LIMIT, custom_tags=custom_tags)
-            logger.info("e621 fetch attempt %d (page %d): %d posts returned", attempt, page, len(posts_data))
-            if posts_data:
-                break
+            posts = await e621_client.fetch_posts(page=page, limit=limit, custom_tags=custom_tags)
+            logger.info("fetch_with_retry attempt %d (page %d): %d posts", attempt, page, len(posts))
+            if posts:
+                return posts
+            if attempt < 4:
+                await asyncio.sleep(1.2)
+        except Exception as exc:
+            logger.error("fetch_with_retry attempt %d failed: %s", attempt, exc)
+            if attempt < 4:
+                await asyncio.sleep(2)
+    return []
+
+
+async def _fetch_by_type_retry(file_type: str, custom_tags: str, limit: int = 50) -> list[dict]:
+    for attempt in range(1, 4):
+        try:
+            posts = await e621_client.fetch_by_type(file_type, limit=limit, custom_tags=custom_tags)
+            logger.info("fetch_by_type(%s) attempt %d: %d posts", file_type, attempt, len(posts))
+            if posts:
+                return posts
             if attempt < 3:
                 await asyncio.sleep(1.2)
         except Exception as exc:
-            logger.error("e621 fetch attempt %d failed: %s", attempt, exc)
+            logger.error("fetch_by_type(%s) attempt %d failed: %s", file_type, attempt, exc)
             if attempt < 3:
                 await asyncio.sleep(2)
-    if not posts_data:
-        logger.warning("All e621 fetch attempts returned 0 posts")
-        return 0
-    count = await _insert_posts(db, posts_data)
-    logger.info("Normal refill: added %d posts", count)
-    return count
-
-
-async def _refill_animated(db: Session) -> int:
-    from app.tag_manager import build_query
-    custom_tags = build_query(db)
-    total_added = 0
-    try:
-        gif_posts = await e621_client.fetch_by_type("gif", limit=50, custom_tags=custom_tags)
-        added = await _insert_posts(db, gif_posts)
-        logger.info("Animated boost (GIF): added %d posts", added)
-        total_added += added
-    except Exception as exc:
-        logger.warning("GIF fetch failed: %s", exc)
-
-    # Busca vídeos WebM (pausa de 1s entre requests)
-    await asyncio.sleep(1.2)
-    try:
-        vid_posts = await e621_client.fetch_by_type("webm", limit=50)
-        added = await _insert_posts(db, vid_posts)
-        logger.info("Animated boost (WebM): added %d posts", added)
-        total_added += added
-    except Exception as exc:
-        logger.warning("WebM fetch failed: %s", exc)
-
-    if total_added == 0:
-        logger.warning("Animated boost yielded 0 posts — falling back to normal refill")
-        return await _refill_normal(db)
-
-    return total_added
+    return []
 
 
 async def _run_send_job() -> None:
