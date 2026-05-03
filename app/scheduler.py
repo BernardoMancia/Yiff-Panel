@@ -241,6 +241,10 @@ async def _refill_queue(db: Session) -> int:
         total_added = await _insert_posts(db, raw_posts)
 
     logger.info("Balanced refill complete: %d posts added", total_added)
+    if total_added > 0:
+        # Recalcula e persiste a ordem da fila para exibição estável no dashboard
+        ordered = _compute_queue_order(db)
+        _persist_queue_order(db, ordered)
     _broadcast_sse({"event": "refill_done", "added": total_added})
     return total_added
 
@@ -327,8 +331,37 @@ def _advance_cycle(db: Session, cycle: list[str], idx: int) -> None:
     db.commit()
 
 
+_QUEUE_ORDER_KEY = "queue_order"
+
+
 def get_ordered_queue(db: Session, limit: int = 10) -> list[Post]:
-    """Retorna posts na ordem que serão enviados pelo ciclo (não FIFO)."""
+    """Retorna posts na ordem persistida (estável entre refreshes)."""
+    import json as _json
+    row = db.query(AppState).filter(AppState.key == _QUEUE_ORDER_KEY).first()
+    if row and row.value:
+        try:
+            ids: list[int] = _json.loads(row.value)
+            valid = {
+                p.id: p for p in db.query(Post)
+                .filter(Post.status == "queued", Post.is_deleted == False)
+                .all()
+            }
+            ordered = [valid[pid] for pid in ids if pid in valid]
+            # Se a ordem persistida está vazia mas há posts na fila, recalcula
+            if not ordered and valid:
+                ordered = _compute_queue_order(db)
+                _persist_queue_order(db, ordered)
+            return ordered[:limit]
+        except Exception:
+            pass
+    # Primeira vez ou erro: calcula e persiste
+    ordered = _compute_queue_order(db)
+    _persist_queue_order(db, ordered)
+    return ordered[:limit]
+
+
+def _compute_queue_order(db: Session) -> list[Post]:
+    """Calcula a ordem da fila baseada no ciclo. Embaralha UMA VEZ e persiste."""
     candidates = (
         db.query(Post)
         .filter(Post.status == "queued", Post.is_deleted == False)
@@ -338,7 +371,6 @@ def get_ordered_queue(db: Session, limit: int = 10) -> list[Post]:
         return []
 
     cycle, idx = _get_or_create_cycle(db)
-
     images = [p for p in candidates if p.file_ext in _STATIC_EXTS]
     videos = [p for p in candidates if p.file_ext in _VIDEO_EXTS]
     gifs = [p for p in candidates if p.file_ext in _GIF_EXTS]
@@ -350,37 +382,60 @@ def get_ordered_queue(db: Session, limit: int = 10) -> list[Post]:
     img_ptr = vid_ptr = gif_ptr = 0
     result: list[Post] = []
     current_idx = idx
+    total = len(candidates)
 
-    for _ in range(limit * 3):
-        if len(result) >= limit:
+    for _ in range(total * 3):
+        if len(result) >= total:
             break
         slot_type = cycle[current_idx % len(cycle)]
         current_idx += 1
 
-        picked = None
         if slot_type == "image" and img_ptr < len(images):
-            picked = images[img_ptr]; img_ptr += 1
+            result.append(images[img_ptr]); img_ptr += 1
         elif slot_type == "video" and vid_ptr < len(videos):
-            picked = videos[vid_ptr]; vid_ptr += 1
+            result.append(videos[vid_ptr]); vid_ptr += 1
         elif slot_type == "gif" and gif_ptr < len(gifs):
-            picked = gifs[gif_ptr]; gif_ptr += 1
+            result.append(gifs[gif_ptr]); gif_ptr += 1
         else:
-            # tipo não disponível — pula para próximo slot
             continue
 
-        result.append(picked)
-
-    # Preenche restantes de qualquer tipo se ciclo esgotou opções
     used_ids = {p.id for p in result}
     for pool in (images, videos, gifs):
         for p in pool:
-            if len(result) >= limit:
-                break
             if p.id not in used_ids:
                 result.append(p)
                 used_ids.add(p.id)
 
-    return result[:limit]
+    return result
+
+
+def _persist_queue_order(db: Session, posts: list[Post]) -> None:
+    """Salva a ordem da fila no AppState como JSON de IDs."""
+    import json as _json
+    ids = [p.id for p in posts]
+    row = db.query(AppState).filter(AppState.key == _QUEUE_ORDER_KEY).first()
+    serialized = _json.dumps(ids)
+    if row:
+        row.value = serialized
+    else:
+        db.add(AppState(key=_QUEUE_ORDER_KEY, value=serialized))
+    db.commit()
+
+
+def _remove_from_queue_order(db: Session, post_id: int) -> None:
+    """Remove um post da ordem persistida após envio."""
+    import json as _json
+    row = db.query(AppState).filter(AppState.key == _QUEUE_ORDER_KEY).first()
+    if not row or not row.value:
+        return
+    try:
+        ids = _json.loads(row.value)
+        ids = [i for i in ids if i != post_id]
+        row.value = _json.dumps(ids)
+        db.commit()
+    except Exception:
+        pass
+
 
 
 def _get_cached_next_post(db: Session) -> Post | None:
@@ -540,6 +595,7 @@ async def _run_send_job() -> None:
         if success:
             cycle, idx = _get_or_create_cycle(db)
             _advance_cycle(db, cycle, idx)
+            _remove_from_queue_order(db, next_post.id)
             _cache_next_post_id(db)
 
         _broadcast_sse(
