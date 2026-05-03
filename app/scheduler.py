@@ -117,21 +117,33 @@ def analyze_queue_composition(db: Session) -> dict:
 
 async def _insert_posts(db: Session, posts_data: list[dict]) -> int:
     """Insere posts únicos no banco, retorna quantidade adicionada."""
-    existing_ids = {
-        row[0]
-        for row in db.query(Post.e621_id).filter(
-            Post.status.in_(["queued", "sent"])
-        ).all()
+    existing = {
+        row[0]: row[1]
+        for row in db.query(Post.e621_id, Post.status).all()
     }
     count = 0
+    reactivated = 0
     for raw in posts_data:
         normalized = e621_client.normalize(raw)
-        if normalized["e621_id"] in existing_ids:
-            continue
-        db.add(Post(**normalized))
-        count += 1
+        eid = normalized["e621_id"]
+        if eid in existing:
+            status = existing[eid]
+            if status in ("queued", "sent"):
+                continue
+            # Post existe mas foi deletado/resetado — reativar
+            db.query(Post).filter(Post.e621_id == eid).update(
+                {"status": "queued", "is_deleted": False, "queued_at": normalized.get("queued_at")},
+                synchronize_session=False,
+            )
+            reactivated += 1
+            count += 1
+        else:
+            db.add(Post(**normalized))
+            count += 1
     if count:
         db.commit()
+    if reactivated:
+        logger.info("Reactivated %d soft-deleted posts during refill", reactivated)
     return count
 
 
