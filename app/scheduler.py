@@ -117,12 +117,14 @@ def analyze_queue_composition(db: Session) -> dict:
 
 async def _insert_posts(db: Session, posts_data: list[dict]) -> int:
     """Insere posts únicos no banco, retorna quantidade adicionada."""
+    from datetime import datetime, timezone
     existing = {
         row[0]: row[1]
         for row in db.query(Post.e621_id, Post.status).all()
     }
     count = 0
     reactivated = 0
+    now = datetime.now(timezone.utc)
     for raw in posts_data:
         normalized = e621_client.normalize(raw)
         eid = normalized["e621_id"]
@@ -130,9 +132,8 @@ async def _insert_posts(db: Session, posts_data: list[dict]) -> int:
             status = existing[eid]
             if status in ("queued", "sent"):
                 continue
-            # Post existe mas foi deletado/resetado — reativar
             db.query(Post).filter(Post.e621_id == eid).update(
-                {"status": "queued", "is_deleted": False, "queued_at": normalized.get("queued_at")},
+                {"status": "queued", "is_deleted": False, "queued_at": now},
                 synchronize_session=False,
             )
             reactivated += 1
@@ -165,12 +166,24 @@ async def _refill_queue(db: Session) -> int:
 
 async def _refill_normal(db: Session) -> int:
     from app.tag_manager import build_query
-    logger.info("Refilling queue from e621 (normal mode)...")
-    try:
-        custom_tags = build_query(db)
-        posts_data = await e621_client.fetch_random_posts(limit=settings.E621_LIMIT, custom_tags=custom_tags)
-    except Exception as exc:
-        logger.error("Failed to fetch from e621: %s", exc)
+    from datetime import datetime, timezone
+    custom_tags = build_query(db)
+    logger.info("Refilling queue — query: %s", custom_tags)
+    posts_data: list[dict] = []
+    for attempt, page in enumerate(random.sample(range(1, 6), 5), start=1):
+        try:
+            posts_data = await e621_client.fetch_posts(page=page, limit=settings.E621_LIMIT, custom_tags=custom_tags)
+            logger.info("e621 fetch attempt %d (page %d): %d posts returned", attempt, page, len(posts_data))
+            if posts_data:
+                break
+            if attempt < 3:
+                await asyncio.sleep(1.2)
+        except Exception as exc:
+            logger.error("e621 fetch attempt %d failed: %s", attempt, exc)
+            if attempt < 3:
+                await asyncio.sleep(2)
+    if not posts_data:
+        logger.warning("All e621 fetch attempts returned 0 posts")
         return 0
     count = await _insert_posts(db, posts_data)
     logger.info("Normal refill: added %d posts", count)
