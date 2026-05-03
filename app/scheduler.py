@@ -244,6 +244,56 @@ async def _fetch_by_type_retry(file_type: str, custom_tags: str, limit: int = 50
     return []
 
 
+_SEND_CYCLE_KEY = "send_cycle"
+_SEND_CYCLE_IDX_KEY = "send_cycle_idx"
+
+_BASE_CYCLE = ["image"] * 6 + ["video"] * 3 + ["gif"] * 1
+
+
+def _get_or_create_cycle(db: Session) -> tuple[list[str], int]:
+    cycle_row = db.query(AppState).filter(AppState.key == _SEND_CYCLE_KEY).first()
+    idx_row = db.query(AppState).filter(AppState.key == _SEND_CYCLE_IDX_KEY).first()
+
+    idx = int(idx_row.value) if idx_row and idx_row.value else 0
+    if cycle_row and cycle_row.value:
+        try:
+            import json as _json
+            cycle = _json.loads(cycle_row.value)
+            if len(cycle) == 10:
+                return cycle, idx
+        except Exception:
+            pass
+
+    cycle = _BASE_CYCLE[:]
+    random.shuffle(cycle)
+    serialized = str(cycle).replace("'", '"')
+    if cycle_row:
+        cycle_row.value = serialized
+    else:
+        db.add(AppState(key=_SEND_CYCLE_KEY, value=serialized))
+    if not idx_row:
+        db.add(AppState(key=_SEND_CYCLE_IDX_KEY, value="0"))
+    db.commit()
+    return cycle, 0
+
+
+def _advance_cycle(db: Session, cycle: list[str], idx: int) -> None:
+    next_idx = (idx + 1) % len(cycle)
+    idx_row = db.query(AppState).filter(AppState.key == _SEND_CYCLE_IDX_KEY).first()
+    if next_idx == 0:
+        new_cycle = _BASE_CYCLE[:]
+        random.shuffle(new_cycle)
+        import json as _json
+        cycle_row = db.query(AppState).filter(AppState.key == _SEND_CYCLE_KEY).first()
+        if cycle_row:
+            cycle_row.value = str(new_cycle).replace("'", '"')
+    if idx_row:
+        idx_row.value = str(next_idx)
+    else:
+        db.add(AppState(key=_SEND_CYCLE_IDX_KEY, value=str(next_idx)))
+    db.commit()
+
+
 def _pick_next_post(db: Session) -> Post | None:
     candidates = (
         db.query(Post)
@@ -252,20 +302,26 @@ def _pick_next_post(db: Session) -> Post | None:
     )
     if not candidates:
         return None
+
     images = [p for p in candidates if p.file_ext in _STATIC_EXTS]
     videos = [p for p in candidates if p.file_ext in _VIDEO_EXTS]
     gifs = [p for p in candidates if p.file_ext in _GIF_EXTS]
-    weights = (
-        (images, 0.60),
-        (videos, 0.30),
-        (gifs, 0.10),
-    )
-    available = [(pool, w) for pool, w in weights if pool]
-    if not available:
-        return random.choice(candidates)
-    pools, raw_weights = zip(*available)
-    chosen_pool = random.choices(pools, weights=raw_weights, k=1)[0]
-    return random.choice(chosen_pool)
+
+    cycle, idx = _get_or_create_cycle(db)
+    slot_type = cycle[idx]
+
+    if slot_type == "image" and images:
+        return random.choice(images)
+    if slot_type == "video" and videos:
+        return random.choice(videos)
+    if slot_type == "gif" and gifs:
+        return random.choice(gifs)
+
+    # Fallback se o tipo do slot não tem post disponível
+    for pool in (images, videos, gifs):
+        if pool:
+            return random.choice(pool)
+    return random.choice(candidates)
 
 
 async def _run_send_job() -> None:
@@ -317,6 +373,10 @@ async def _run_send_job() -> None:
         _set_state(db, "next_run_at", next_run.isoformat())
         _set_state(db, "last_post_id", str(next_post.id) if success else "")
         db.commit()
+
+        if success:
+            cycle, idx = _get_or_create_cycle(db)
+            _advance_cycle(db, cycle, idx)
 
         _broadcast_sse(
             {
