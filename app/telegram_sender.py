@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 import logging
 import random
 
-from telegram import Bot, ReactionTypeEmoji
+import aiohttp
+from telegram import Bot, InputFile, ReactionTypeEmoji
 from telegram.error import TelegramError
 
 from app.config import settings
@@ -11,7 +13,7 @@ from app.database import Post
 
 logger = logging.getLogger(__name__)
 
-_MAX_DIRECT_SIZE = 50 * 1024 * 1024
+_MAX_DOWNLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
 _VIDEO_EXTS = {"webm", "mp4"}
 _ANIM_EXTS = {"gif"}
 _PHOTO_EXTS = {"jpg", "jpeg", "png"}
@@ -31,28 +33,40 @@ class TelegramSender:
     async def send_media(self, post: Post) -> tuple[bool, int | None]:
         ext = (post.file_ext or "").lower()
         url = post.file_url
-        if post.file_size and post.file_size > _MAX_DIRECT_SIZE and post.sample_url:
+        file_size = post.file_size or 0
+
+        if file_size > _MAX_DOWNLOAD_SIZE and post.sample_url:
             url = post.sample_url
+            file_size = 0
+
         if not url:
             logger.error("Post %s has no URL", post.e621_id)
             return False, None
+
         bot = self._get_bot()
         chat_id = settings.TELEGRAM_CHAT_ID
         thumb = post.sample_url or None
+
         try:
-            if ext == "mp4":
-                msg = await bot.send_video(
-                    chat_id=chat_id,
-                    video=url,
-                    thumbnail=thumb,
-                    supports_streaming=True,
-                    caption=None,
-                    read_timeout=90,
-                    write_timeout=90,
-                    connect_timeout=30,
-                )
-            elif ext in _VIDEO_EXTS or ext in _ANIM_EXTS:
-                # WebM e GIF: send_animation mostra inline com autoplay/loop
+            if ext in _VIDEO_EXTS:
+                # Baixa e envia como bytes — único modo que o Telegram exibe player inline para WebM
+                video_bytes = await _download_file(url)
+                if video_bytes:
+                    input_file = InputFile(io.BytesIO(video_bytes), filename="video.mp4")
+                    msg = await bot.send_video(
+                        chat_id=chat_id,
+                        video=input_file,
+                        thumbnail=thumb,
+                        supports_streaming=True,
+                        caption=None,
+                        read_timeout=120,
+                        write_timeout=120,
+                        connect_timeout=30,
+                    )
+                else:
+                    raise TelegramError("Download failed, falling back")
+
+            elif ext in _ANIM_EXTS:
                 msg = await bot.send_animation(
                     chat_id=chat_id,
                     animation=url,
@@ -71,14 +85,16 @@ class TelegramSender:
                     write_timeout=60,
                     connect_timeout=30,
                 )
-            logger.info("Sent post e621#%s (%s) to Telegram — msg_id=%d", post.e621_id, ext, msg.message_id)
+
+            logger.info("Sent post e621#%s (%s) — msg_id=%d", post.e621_id, ext, msg.message_id)
             await _react_to_message(bot, chat_id, msg.message_id)
             return True, msg.message_id
+
         except TelegramError as exc:
             err = str(exc).lower()
-            # Fallback 1: arquivo muito grande → tenta sample como photo
-            if ("too big" in err or "file_size" in err) and post.sample_url and url != post.sample_url:
-                logger.warning("File too big, retrying with sample_url for e621#%s", post.e621_id)
+            # Fallback: arquivo grande ou erro → envia sample como foto
+            if post.sample_url and url != post.sample_url:
+                logger.warning("Primary send failed (%s), retrying with sample_url for e621#%s", exc, post.e621_id)
                 try:
                     msg = await bot.send_photo(
                         chat_id=chat_id,
@@ -91,26 +107,7 @@ class TelegramSender:
                     await _react_to_message(bot, chat_id, msg.message_id)
                     return True, msg.message_id
                 except TelegramError as exc2:
-                    logger.error("Retry also failed for e621#%s: %s", post.e621_id, exc2)
-                    return False, None
-            # Fallback 2: send_animation falhou → tenta send_video
-            if ext in _VIDEO_EXTS and "animation" not in err:
-                logger.warning("send_animation failed, trying send_video for e621#%s: %s", post.e621_id, exc)
-                try:
-                    msg = await bot.send_video(
-                        chat_id=chat_id,
-                        video=url,
-                        supports_streaming=True,
-                        caption=None,
-                        read_timeout=90,
-                        write_timeout=90,
-                        connect_timeout=30,
-                    )
-                    await _react_to_message(bot, chat_id, msg.message_id)
-                    return True, msg.message_id
-                except TelegramError as exc2:
-                    logger.error("send_video fallback also failed for e621#%s: %s", post.e621_id, exc2)
-                    return False, None
+                    logger.error("Sample fallback failed for e621#%s: %s", post.e621_id, exc2)
             logger.error("TelegramError for e621#%s: %s", post.e621_id, exc)
             return False, None
         except Exception as exc:
@@ -119,6 +116,23 @@ class TelegramSender:
 
 
 telegram_sender = TelegramSender()
+
+
+async def _download_file(url: str) -> bytes | None:
+    """Baixa arquivo em memória com timeout generoso."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=90, connect=15)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers={"User-Agent": "auto-yiff-bot/1.0"}) as resp:
+                if resp.status != 200:
+                    logger.warning("Download failed with status %d for %s", resp.status, url)
+                    return None
+                data = await resp.read()
+                logger.info("Downloaded %d bytes from %s", len(data), url)
+                return data
+    except Exception as exc:
+        logger.error("Download error for %s: %s", url, exc)
+        return None
 
 
 async def _react_to_message(bot: Bot, chat_id: str, message_id: int) -> None:
