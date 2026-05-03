@@ -82,10 +82,32 @@ def get_blacklist_tags(db: Session) -> list[str]:
 
 
 def build_query(db: Session, extra: str = "") -> str:
-    parts = get_mandatory_tags(db)
-    parts += get_required_tags(db)
-    parts += [f"~{t}" for t in get_or_tags(db)]
-    parts += [f"-{t}" for t in get_blacklist_tags(db)]
+    from app.database import AppState
+    mandatory = get_mandatory_tags(db)
+    required = get_required_tags(db)
+    or_tags = get_or_tags(db)
+    blacklist = get_blacklist_tags(db)
+
+    parts: list[str] = []
+
+    if mandatory:
+        idx_row = db.query(AppState).filter(AppState.key == "mandatory_rotation_idx").first()
+        idx = int(idx_row.value) if idx_row and idx_row.value else 0
+        current = mandatory[idx % len(mandatory)]
+        parts.append(current)
+        for t in mandatory:
+            if t != current:
+                parts.append(f"~{t}")
+        next_idx = (idx + 1) % len(mandatory)
+        if idx_row:
+            idx_row.value = str(next_idx)
+        else:
+            db.add(AppState(key="mandatory_rotation_idx", value=str(next_idx)))
+        db.commit()
+
+    parts += required
+    parts += [f"~{t}" for t in or_tags]
+    parts += [f"-{t}" for t in blacklist]
     if extra:
         parts.append(extra)
     parts += ["order:random", "rating:e"]
