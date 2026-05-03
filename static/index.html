@@ -173,6 +173,30 @@
 
     </div>
 
+    <!-- Filtros Ativos -->
+    <section class="tags-section glass-card" aria-label="Filtros de busca">
+      <h2 class="section-title">
+        <span class="section-title__icon">🔍</span>
+        Filtros Ativos
+      </h2>
+      <div class="tags-panel">
+        <div class="tags-group">
+          <span class="tags-group__label">Inclui</span>
+          <div class="tags-group__chips" id="tags-included"><span class="tag-chip tag-chip--loading">⋯</span></div>
+        </div>
+        <div class="tags-group">
+          <span class="tags-group__label">Blacklist</span>
+          <div class="tags-group__chips" id="tags-blacklist"><span class="tag-chip tag-chip--loading">⋯</span></div>
+        </div>
+        <div class="tags-group tags-group--meta">
+          <span class="tags-group__label">Intervalo</span>
+          <span class="tag-chip tag-chip--meta" id="tags-interval">—</span>
+          <span class="tags-group__label" style="margin-left:12px">Balanceamento</span>
+          <span class="tag-chip tag-chip--meta" id="tags-balance">—</span>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <!-- Toast container -->
@@ -185,6 +209,25 @@
       <span>Feral · Gay · Only machos</span>
     </div>
   </footer>
+
+  <!-- Lightbox Modal -->
+  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Visualização de mídia">
+    <button class="lightbox__close" id="lightbox-close" aria-label="Fechar">&times;</button>
+    <div class="lightbox__backdrop" id="lightbox-backdrop"></div>
+    <div class="lightbox__content">
+      <div class="lightbox__media" id="lightbox-media"></div>
+      <div class="lightbox__info" id="lightbox-info">
+        <div class="lightbox__meta">
+          <span class="meta-badge" id="lb-id">e621#—</span>
+          <span class="meta-badge meta-badge--score" id="lb-score">⬆ —</span>
+          <span class="meta-badge meta-badge--fav" id="lb-fav">♥ —</span>
+          <span class="meta-badge" id="lb-ext">—</span>
+          <a class="meta-badge meta-badge--link" id="lb-link" href="#" target="_blank" rel="noopener">Abrir e621 ↗</a>
+        </div>
+        <div class="lightbox__tags" id="lb-tags"></div>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

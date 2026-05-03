@@ -7,7 +7,10 @@ const API = {
   queue: '/api/queue?limit=10',
   stream: '/api/stream',
   trigger: '/api/trigger',
+  config: '/api/config',
 };
+
+let _currentPost = null;
 
 let _nextRunAt = null;
 let _totalInterval = 0;
@@ -147,6 +150,7 @@ async function loadNext() {
     }
 
     if (next_post) {
+      _cachePost(next_post);
       renderNextPost(next_post);
     }
   } catch (e) {
@@ -187,6 +191,7 @@ async function loadHistory() {
       grid.innerHTML = '<div class="loading-row">Nenhum envio ainda.</div>';
       return;
     }
+    posts.forEach(p => _cachePost(p));
     grid.innerHTML = posts.map(p => thumbCard(p)).join('');
   } catch (e) {
     qs('#history-grid').innerHTML = '<div class="loading-row">Erro ao carregar.</div>';
@@ -196,9 +201,11 @@ async function loadHistory() {
 function thumbCard(post) {
   const src = post.preview_url || post.sample_url || '';
   const id = `thumb-${post.id}`;
+  const dataIdx = `data-post-id="${post.id}"`;
   return `
-    <div class="media-thumb" id="${id}" title="e621#${post.e621_id} — ⬆${post.score} ♥${post.fav_count}"
-         onclick="window.open('https://e621.net/posts/${post.e621_id}','_blank')">
+    <div class="media-thumb" id="${id}" ${dataIdx}
+         title="e621#${post.e621_id} — ⬆${post.score} ♥${post.fav_count}"
+         onclick="window._openPostById(${post.id})">
       ${src ? `<img src="${src}" alt="e621#${post.e621_id}" loading="lazy" />` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
       <div class="media-thumb__ext">${extBadge(post.file_ext)}</div>
       <div class="media-thumb__overlay">
@@ -208,7 +215,85 @@ function thumbCard(post) {
     </div>`;
 }
 
-/* ─── Queue ─── */
+/* ─── Lightbox ─── */
+function openLightbox(post) {
+  _currentPost = post;
+  const ext = (post.file_ext || '').toLowerCase();
+  const mediaEl = qs('#lightbox-media');
+  const useUrl = (post.file_size && post.file_size > 50 * 1024 * 1024)
+    ? (post.sample_url || post.file_url)
+    : (post.file_url || post.sample_url);
+
+  // Limpar media anterior
+  mediaEl.innerHTML = '';
+
+  if (ext === 'webm' || ext === 'mp4') {
+    const vid = document.createElement('video');
+    vid.src = useUrl;
+    vid.controls = true;
+    vid.autoplay = true;
+    vid.loop = true;
+    vid.muted = false;
+    vid.setAttribute('playsinline', '');
+    mediaEl.appendChild(vid);
+  } else {
+    const img = document.createElement('img');
+    img.src = useUrl;
+    img.alt = `e621#${post.e621_id}`;
+    mediaEl.appendChild(img);
+  }
+
+  qs('#lb-id').textContent = `e621#${post.e621_id}`;
+  qs('#lb-score').textContent = `⬆ ${post.score ?? 0}`;
+  qs('#lb-fav').textContent = `♥ ${post.fav_count ?? 0}`;
+  qs('#lb-ext').textContent = (ext || '?').toUpperCase();
+  qs('#lb-link').href = `https://e621.net/posts/${post.e621_id}`;
+
+  const tagsEl = qs('#lb-tags');
+  const tags = Array.isArray(post.tags) ? post.tags : [];
+  tagsEl.innerHTML = tags.length
+    ? tags.map(t => `<span class="lb-tag">${t}</span>`).join('')
+    : '<span style="color:var(--text-muted);font-size:11px">Sem tags disponíveis</span>';
+
+  qs('#lightbox').classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeLightbox() {
+  const lb = qs('#lightbox');
+  lb.classList.remove('active');
+  document.body.style.overflow = '';
+  // Para vídeo
+  const vid = lb.querySelector('video');
+  if (vid) { vid.pause(); vid.src = ''; }
+  qs('#lightbox-media').innerHTML = '';
+  _currentPost = null;
+}
+
+/* ─── Filter Tags ─── */
+async function loadConfig() {
+  try {
+    const cfg = await fetch(API.config).then(r => r.json());
+
+    const incEl = qs('#tags-included');
+    incEl.innerHTML = cfg.search_tags.map(t => {
+      const cls = t.startsWith('~') ? 'tag-chip--or' : 'tag-chip--required';
+      const label = t.startsWith('~') ? t.slice(1) : t;
+      return `<span class="tag-chip ${cls}" title="${t.startsWith('~') ? 'OR' : 'Obrigatório'}">${label}</span>`;
+    }).join('');
+
+    const blEl = qs('#tags-blacklist');
+    blEl.innerHTML = cfg.blacklist.map(t =>
+      `<span class="tag-chip tag-chip--blacklist">−${t}</span>`
+    ).join('');
+
+    qs('#tags-interval').textContent = cfg.interval;
+    qs('#tags-balance').textContent = `boost > ${cfg.balance_threshold} imagens`;
+  } catch (e) {
+    console.warn('Config fetch failed', e);
+  }
+}
+
 async function loadQueue() {
   try {
     const posts = await fetch(API.queue).then(r => r.json());
@@ -220,6 +305,7 @@ async function loadQueue() {
       return;
     }
     if (badge) badge.textContent = posts.length;
+    posts.forEach(p => _cachePost(p));
     list.innerHTML = posts.map((p, i) => queueItem(p, i)).join('');
   } catch (e) {
     qs('#queue-list').innerHTML = '<div class="loading-row">Erro ao carregar.</div>';
@@ -231,7 +317,7 @@ function queueItem(post, idx) {
   const src = post.preview_url || post.sample_url || '';
   const pos = idx + 1;
   return `
-    <div class="queue-item${isNext ? ' queue-item--next' : ''}">
+    <div class="queue-item${isNext ? ' queue-item--next' : ''}" onclick="window._openPostById(${post.id})" style="cursor:pointer">
       <span class="queue-item__pos${isNext ? ' queue-item__pos--next' : ''}">${isNext ? '▶' : pos}</span>
       ${src
         ? `<img class="queue-item__thumb" src="${src}" alt="e621#${post.e621_id}" loading="lazy" />`
@@ -315,12 +401,29 @@ function connectSSE() {
 
 /* ─── Init ─── */
 async function init() {
-  await Promise.all([loadStats(), loadNext(), loadHistory(), loadQueue()]);
+  await Promise.all([loadStats(), loadNext(), loadHistory(), loadQueue(), loadConfig()]);
   startCountdown();
   connectSSE();
 
   setInterval(loadStats, 30_000);
   setInterval(loadQueue, 30_000);
+
+  // Lightbox events
+  qs('#lightbox-close').addEventListener('click', closeLightbox);
+  qs('#lightbox-backdrop').addEventListener('click', closeLightbox);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
+  // Lookup global para abrir lightbox por ID do post (usado nos onclick inline)
+  window._postCache = {};
+  window._openPostById = (id) => {
+    const post = window._postCache[id];
+    if (post) openLightbox(post);
+  };
+}
+
+function _cachePost(post) {
+  if (!window._postCache) window._postCache = {};
+  if (post && post.id) window._postCache[post.id] = post;
 }
 
 document.addEventListener('DOMContentLoaded', init);

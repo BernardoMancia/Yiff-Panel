@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 def _serialize_post(p: Post) -> dict:
+    try:
+        tags_list = json.loads(p.tags) if p.tags else []
+    except Exception:
+        tags_list = []
     return {
         "id": p.id,
         "e621_id": p.e621_id,
@@ -24,9 +28,11 @@ def _serialize_post(p: Post) -> dict:
         "sample_url": p.sample_url,
         "preview_url": p.preview_url,
         "file_ext": p.file_ext,
+        "file_size": p.file_size,
         "score": p.score,
         "fav_count": p.fav_count,
         "status": p.status,
+        "tags": tags_list,
         "queued_at": p.queued_at.isoformat() if p.queued_at else None,
         "sent_at": p.sent_at.isoformat() if p.sent_at else None,
     }
@@ -139,3 +145,21 @@ async def trigger_now(db: Session = Depends(get_db)):
     from app.scheduler import _schedule_next
     _schedule_next(3)
     return {"status": "triggered", "message": "Job will run in ~3 seconds"}
+
+
+@router.get("/config")
+def get_config():
+    from app.config import settings
+    raw_tags = settings.E621_TAGS
+    tag_tokens = raw_tags.replace("order:random", "").replace("rating:e", "").split()
+    included = [t for t in tag_tokens if not t.startswith("-")]
+    excluded_api = [t.lstrip("-") for t in tag_tokens if t.startswith("-")]
+    blacklist_extra = sorted(
+        settings.E621_BLACKLIST - set(excluded_api)
+    )
+    return {
+        "search_tags": included,
+        "blacklist": sorted(set(excluded_api) | settings.E621_BLACKLIST),
+        "interval": f"{settings.MIN_INTERVAL_SECONDS // 60}min – {settings.MAX_INTERVAL_SECONDS // 60}min",
+        "balance_threshold": f"{int(settings.BALANCE_IMAGE_THRESHOLD * 100)}%",
+    }
