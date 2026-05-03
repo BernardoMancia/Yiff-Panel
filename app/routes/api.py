@@ -71,6 +71,14 @@ def get_queue(limit: int = 10, db: Session = Depends(get_db)):
     return [_serialize_post(p) for p in posts]
 
 
+@router.get("/post/{post_id}")
+def get_post_by_id(post_id: int, db: Session = Depends(get_db)):
+    post = db.query(Post).filter(Post.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return _serialize_post(post)
+
+
 @router.get("/next")
 def get_next(db: Session = Depends(get_db)):
     next_post = (

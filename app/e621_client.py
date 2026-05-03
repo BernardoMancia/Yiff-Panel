@@ -88,25 +88,6 @@ class E621Client:
         ext = file_info.get("ext", "").lower()
         if ext not in ("jpg", "jpeg", "png", "gif", "webm", "mp4"):
             return False
-
-        tags_all = post.get("tags", {})
-        tag_set: set[str] = set()
-        for v in tags_all.values():
-            if isinstance(v, list):
-                tag_set.update(v)
-
-        # Deve ter ao menos uma tag do grupo temático (OR)
-        if not (settings.E621_REQUIRED_ANY & tag_set):
-            return False
-
-        # Blacklist client-side (reforço além da query API)
-        if tag_set & settings.E621_BLACKLIST:
-            return False
-
-        # Garante que é conteúdo entre machos
-        if "female" in tag_set:
-            return False
-
         return True
 
     @staticmethod

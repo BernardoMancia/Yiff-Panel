@@ -24,11 +24,21 @@ function _adminHeaders() {
 }
 
 let _currentPost = null;
-
 let _nextRunAt = null;
 let _totalInterval = 0;
 let _countdownInterval = null;
 let _sse = null;
+
+window._postCache = {};
+
+window._openPostById = async (id) => {
+  let post = window._postCache[id];
+  if (post) { openLightbox(post); return; }
+  try {
+    const res = await fetch(`/api/post/${id}`).then(r => r.json());
+    if (res && res.id) { _cachePost(res); openLightbox(res); }
+  } catch { console.warn('Post not found for id', id); }
+};
 
 /* ─── Utils ─── */
 function qs(sel) { return document.querySelector(sel); }
@@ -651,12 +661,6 @@ async function init() {
   qs('#lightbox-close').addEventListener('click', closeLightbox);
   qs('#lightbox-backdrop').addEventListener('click', closeLightbox);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
-
-  window._postCache = {};
-  window._openPostById = (id) => {
-    const post = window._postCache[id];
-    if (post) openLightbox(post);
-  };
 }
 
 function _cachePost(post) {

@@ -90,20 +90,9 @@ def build_query(db: Session, extra: str = "") -> str:
 
     parts: list[str] = []
 
+    # Mandatory: todos com ~ → e621 exige pelo menos 1 do grupo OR
     if mandatory:
-        idx_row = db.query(AppState).filter(AppState.key == "mandatory_rotation_idx").first()
-        idx = int(idx_row.value) if idx_row and idx_row.value else 0
-        current = mandatory[idx % len(mandatory)]
-        parts.append(current)
-        for t in mandatory:
-            if t != current:
-                parts.append(f"~{t}")
-        next_idx = (idx + 1) % len(mandatory)
-        if idx_row:
-            idx_row.value = str(next_idx)
-        else:
-            db.add(AppState(key="mandatory_rotation_idx", value=str(next_idx)))
-        db.commit()
+        parts += [f"~{t}" for t in mandatory]
 
     parts += required
     parts += [f"~{t}" for t in or_tags]
