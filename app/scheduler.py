@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import AppState, Post, ScheduleLog, SessionLocal
 from app.e621_client import e621_client
+from app.reaction_monitor import _check_reactions
 from app.telegram_sender import telegram_sender
 
 logger = logging.getLogger(__name__)
@@ -227,11 +228,13 @@ async def _run_send_job() -> None:
             logger.info("Queue running low (%d left). Pre-fetching...", remaining_after_send)
             asyncio.create_task(_background_refill())
 
-        success = await telegram_sender.send_media(next_post)
+        success, message_id = await telegram_sender.send_media(next_post)
         now = datetime.now(timezone.utc)
         if success:
             next_post.status = "sent"
             next_post.sent_at = now
+            if message_id:
+                next_post.message_id = message_id
         else:
             next_post.status = "failed"
             next_post.is_deleted = True
@@ -322,6 +325,17 @@ def start_scheduler() -> None:
 
         logger.info("Scheduler starting — first job in %.0f seconds", delay)
         _schedule_next(int(delay))
+
+        # Verificador de reações a cada 5 minutos
+        _scheduler.add_job(
+            _check_reactions,
+            "interval",
+            minutes=5,
+            id="reaction_monitor",
+            replace_existing=True,
+            max_instances=1,
+        )
+
         _scheduler.start()
     finally:
         db.close()

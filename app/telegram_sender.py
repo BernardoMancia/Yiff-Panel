@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import httpx
 from telegram import Bot
@@ -27,19 +26,19 @@ class TelegramSender:
             self._bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
         return self._bot
 
-    async def send_media(self, post: Post) -> bool:
+    async def send_media(self, post: Post) -> tuple[bool, int | None]:
         ext = (post.file_ext or "").lower()
         url = post.file_url
         if post.file_size and post.file_size > _MAX_DIRECT_SIZE and post.sample_url:
             url = post.sample_url
         if not url:
             logger.error("Post %s has no URL", post.e621_id)
-            return False
+            return False, None
         bot = self._get_bot()
         chat_id = settings.TELEGRAM_CHAT_ID
         try:
             if ext in _VIDEO_EXTS:
-                await bot.send_video(
+                msg = await bot.send_video(
                     chat_id=chat_id,
                     video=url,
                     caption=None,
@@ -48,7 +47,7 @@ class TelegramSender:
                     connect_timeout=30,
                 )
             elif ext in _ANIM_EXTS:
-                await bot.send_animation(
+                msg = await bot.send_animation(
                     chat_id=chat_id,
                     animation=url,
                     caption=None,
@@ -57,7 +56,7 @@ class TelegramSender:
                     connect_timeout=30,
                 )
             else:
-                await bot.send_photo(
+                msg = await bot.send_photo(
                     chat_id=chat_id,
                     photo=url,
                     caption=None,
@@ -65,13 +64,13 @@ class TelegramSender:
                     write_timeout=60,
                     connect_timeout=30,
                 )
-            logger.info("Sent post e621#%s (%s) to Telegram", post.e621_id, ext)
-            return True
+            logger.info("Sent post e621#%s (%s) to Telegram — msg_id=%d", post.e621_id, ext, msg.message_id)
+            return True, msg.message_id
         except TelegramError as exc:
             if "file is too big" in str(exc).lower() and post.sample_url and url != post.sample_url:
                 logger.warning("File too big, retrying with sample URL for e621#%s", post.e621_id)
                 try:
-                    await bot.send_photo(
+                    msg = await bot.send_photo(
                         chat_id=chat_id,
                         photo=post.sample_url,
                         caption=None,
@@ -79,15 +78,15 @@ class TelegramSender:
                         write_timeout=60,
                         connect_timeout=30,
                     )
-                    return True
+                    return True, msg.message_id
                 except TelegramError as exc2:
                     logger.error("Retry also failed for e621#%s: %s", post.e621_id, exc2)
-                    return False
+                    return False, None
             logger.error("TelegramError for e621#%s: %s", post.e621_id, exc)
-            return False
+            return False, None
         except Exception as exc:
             logger.exception("Unexpected error sending e621#%s: %s", post.e621_id, exc)
-            return False
+            return False, None
 
 
 telegram_sender = TelegramSender()

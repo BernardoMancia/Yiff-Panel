@@ -44,6 +44,8 @@ class Post(Base):
     queued_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     sent_at = Column(DateTime, nullable=True)
     is_deleted = Column(Boolean, default=False)
+    message_id = Column(Integer, nullable=True)
+    removed_by_reaction = Column(Boolean, default=False)
     logs = relationship("ScheduleLog", back_populates="post")
 
 

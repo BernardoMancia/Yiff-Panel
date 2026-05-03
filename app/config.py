@@ -28,34 +28,37 @@ class Settings:
         "knotted_penis cum_inflation "
         "~feral ~animal_genitalia ~animal_penis "
         "~equine_penis ~equine_genitalia ~canine_genitalia "
+        "~femboy "
         "-road -machine -car -aircraft -airplane -radiation -gore "
+        "-vore -imminent_vore -anal_vore -soft_vore -diaper "
         "order:random rating:e"
     )
 
-    # Mesma query mas forçando tipo animado (GIF)
     E621_TAGS_GIF: str = (
         "male gay "
         "knotted_penis cum_inflation "
         "~feral ~animal_genitalia ~animal_penis "
         "~equine_penis ~equine_genitalia ~canine_genitalia "
+        "~femboy "
         "-road -machine -car -aircraft -airplane -radiation -gore "
+        "-vore -imminent_vore -anal_vore -soft_vore -diaper "
         "type:gif order:random rating:e"
     )
 
-    # Mesma query mas forçando tipo animado (WebM/vídeo)
     E621_TAGS_VIDEO: str = (
         "male gay "
         "knotted_penis cum_inflation "
         "~feral ~animal_genitalia ~animal_penis "
         "~equine_penis ~equine_genitalia ~canine_genitalia "
+        "~femboy "
         "-road -machine -car -aircraft -airplane -radiation -gore "
+        "-vore -imminent_vore -anal_vore -soft_vore -diaper "
         "type:webm order:random rating:e"
     )
 
-    # Balanceamento de tipos na fila:
-    # Se imagens estáticas > BALANCE_IMAGE_THRESHOLD da fila, busca animados
-    BALANCE_IMAGE_THRESHOLD: float = 0.70   # 70% de imagens = excessivo
-    BALANCE_MIN_QUEUE_SIZE: int = 15         # só analisa quando fila tiver pelo menos 15 itens
+    BALANCE_IMAGE_THRESHOLD: float = 0.60
+    BALANCE_MIN_QUEUE_SIZE: int = 15
+    DISLIKE_THRESHOLD: int = 10
 
     # Tags que DEVEM existir em pelo menos um subgrupo (verificação client-side)
     E621_REQUIRED_ANY: frozenset = frozenset({
@@ -63,10 +66,10 @@ class Settings:
         "equine_penis", "equine_genitalia", "canine_genitalia",
     })
 
-    # Tags que sempre excluem o post (verificação client-side)
     E621_BLACKLIST: frozenset = frozenset({
         "female", "human", "cub", "young", "juvenile", "gore",
         "road", "machine", "car", "aircraft", "airplane", "radiation",
+        "vore", "imminent_vore", "anal_vore", "soft_vore", "diaper",
     })
 
     @property
