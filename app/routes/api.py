@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -192,8 +192,39 @@ def update_tags(body: dict, request: Request, db: Session = Depends(get_db), _=D
         return {"ok": False, "error": str(e)}
 
 
+_refill_running = False
+_refill_result: dict | None = None
+
+
+async def _do_refill_after_reset() -> None:
+    global _refill_running, _refill_result
+    _refill_running = True
+    _refill_result = None
+    db = None
+    try:
+        from app.database import SessionLocal
+        from app.scheduler import _refill_queue
+        db = SessionLocal()
+        added = await _refill_queue(db)
+        _refill_result = {"ok": True, "added": added}
+        logger.info("Post-reset refill complete: %d posts added", added)
+    except Exception as exc:
+        _refill_result = {"ok": False, "error": str(exc)}
+        logger.error("Post-reset refill failed: %s", exc)
+    finally:
+        _refill_running = False
+        if db:
+            db.close()
+
+
 @router.post("/admin/reset-queue")
-def reset_queue(request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
+async def reset_queue(
+    background_tasks: BackgroundTasks,
+    request: Request,
+    db: Session = Depends(get_db),
+    _=Depends(_require_admin),
+):
+    global _refill_running, _refill_result
     deleted = (
         db.query(Post)
         .filter(Post.status == "queued", Post.is_deleted == False)
@@ -205,7 +236,19 @@ def reset_queue(request: Request, db: Session = Depends(get_db), _=Depends(_requ
     )
     db.commit()
     logger.warning("Admin reset queue: %d posts marked as reset.", deleted)
-    return {"ok": True, "removed_from_queue": deleted, "message": "Fila limpa. Novo reabastecimento será feito na próxima execução."}
+    _refill_running = True
+    _refill_result = None
+    background_tasks.add_task(_do_refill_after_reset)
+    return {"ok": True, "removed_from_queue": deleted, "refilling": True}
+
+
+@router.get("/admin/refill-status")
+def refill_status(request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
+    return {
+        "running": _refill_running,
+        "result": _refill_result,
+        "queue_count": db.query(Post).filter(Post.status == "queued", Post.is_deleted == False).count(),
+    }
 
 
 @router.post("/suggestions")

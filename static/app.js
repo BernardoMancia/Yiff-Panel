@@ -13,6 +13,7 @@ const API = {
   me: '/api/auth/me',
   changePw: '/api/auth/change-password',
   resetQueue: '/api/admin/reset-queue',
+  refillStatus: '/api/admin/refill-status',
 };
 
 window._isAdmin = false;
@@ -600,17 +601,42 @@ async function submitChangePassword(e) {
 window.confirmResetQueue = async function() {
   if (!confirm('Tem certeza? Isso vai limpar TODOS os posts em fila (não afeta o canal).')) return;
   const btn = qs('#btn-reset-queue');
-  btn.disabled = true; btn.textContent = '⏳ Resetando...';
+  btn.disabled = true; btn.textContent = '⏳ Limpando fila...';
   try {
     const res = await fetch(API.resetQueue, { method: 'POST', headers: _adminHeaders() }).then(r => r.json());
-    if (res.ok) {
-      toast(`Fila resetada! ${res.removed_from_queue} posts removidos.`, 'success');
-      loadQueue();
-      loadStats();
-    } else { toast('Erro ao resetar', 'error'); }
-  } catch { toast('Erro de conexão', 'error'); }
-  btn.disabled = false; btn.textContent = '🗑️ Resetar Fila de Imagens';
+    if (!res.ok) { toast('Erro ao resetar', 'error'); btn.disabled = false; btn.textContent = '🗑️ Resetar Fila de Imagens'; return; }
+    toast(`Fila limpa (${res.removed_from_queue} posts). Buscando novos...`, 'info');
+    btn.textContent = '🔄 Buscando posts...';
+    loadQueue(); loadStats();
+    _pollRefillStatus(btn);
+  } catch {
+    toast('Erro de conexão', 'error');
+    btn.disabled = false; btn.textContent = '🗑️ Resetar Fila de Imagens';
+  }
 };
+
+async function _pollRefillStatus(btn) {
+  const maxAttempts = 40;
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    try {
+      const s = await fetch(API.refillStatus, { headers: _adminHeaders() }).then(r => r.json());
+      const dots = '.'.repeat((i % 3) + 1);
+      btn.textContent = `🔄 Buscando${dots} (${s.queue_count} na fila)`;
+      loadQueue(); loadStats();
+      if (!s.running) {
+        if (s.result?.ok) {
+          toast(`✅ Reabastecimento completo! ${s.result.added} posts adicionados à fila.`, 'success');
+        } else {
+          toast(`⚠️ Busca finalizada com erro: ${s.result?.error || 'desconhecido'}`, 'error');
+        }
+        break;
+      }
+    } catch { break; }
+  }
+  btn.disabled = false; btn.textContent = '🗑️ Resetar Fila de Imagens';
+  loadQueue(); loadStats();
+}
 
 /* ─── Init ─── */
 async function init() {
