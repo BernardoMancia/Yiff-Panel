@@ -81,12 +81,30 @@ def get_post_by_id(post_id: int, db: Session = Depends(get_db)):
 
 @router.get("/next")
 def get_next(db: Session = Depends(get_db)):
-    next_post = (
-        db.query(Post)
-        .filter(Post.status == "queued", Post.is_deleted == False)
-        .order_by(Post.queued_at.asc())
-        .first()
-    )
+    next_post = None
+
+    # Tenta usar o ID pré-selecionado pelo ciclo
+    cached_id_row = db.query(AppState).filter(AppState.key == "next_post_id").first()
+    if cached_id_row and cached_id_row.value:
+        try:
+            cached_id = int(cached_id_row.value)
+            next_post = db.query(Post).filter(
+                Post.id == cached_id,
+                Post.status == "queued",
+                Post.is_deleted == False,
+            ).first()
+        except (ValueError, Exception):
+            pass
+
+    # Fallback: primeiro da fila se cache inválido
+    if next_post is None:
+        next_post = (
+            db.query(Post)
+            .filter(Post.status == "queued", Post.is_deleted == False)
+            .order_by(Post.queued_at.asc())
+            .first()
+        )
+
     state = db.query(AppState).filter(AppState.key == "next_run_at").first()
     next_run_at = state.value if state else None
 

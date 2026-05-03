@@ -327,6 +327,44 @@ def _advance_cycle(db: Session, cycle: list[str], idx: int) -> None:
     db.commit()
 
 
+def _cache_next_post_id(db: Session) -> None:
+    """Pré-seleciona e cacheia o ID do próximo post a ser enviado (read-only no ciclo)."""
+    post = _preview_next_post(db)
+    val = str(post.id) if post else ""
+    row = db.query(AppState).filter(AppState.key == "next_post_id").first()
+    if row:
+        row.value = val
+    else:
+        db.add(AppState(key="next_post_id", value=val))
+    db.commit()
+
+
+def _preview_next_post(db: Session) -> Post | None:
+    """Lê o ciclo atual e retorna o post que SERIA enviado a seguir (sem mutar o ciclo)."""
+    candidates = (
+        db.query(Post)
+        .filter(Post.status == "queued", Post.is_deleted == False)
+        .all()
+    )
+    if not candidates:
+        return None
+    images = [p for p in candidates if p.file_ext in _STATIC_EXTS]
+    videos = [p for p in candidates if p.file_ext in _VIDEO_EXTS]
+    gifs = [p for p in candidates if p.file_ext in _GIF_EXTS]
+    cycle, idx = _get_or_create_cycle(db)
+    slot_type = cycle[idx]
+    if slot_type == "image" and images:
+        return random.choice(images)
+    if slot_type == "video" and videos:
+        return random.choice(videos)
+    if slot_type == "gif" and gifs:
+        return random.choice(gifs)
+    for pool in (images, videos, gifs):
+        if pool:
+            return random.choice(pool)
+    return random.choice(candidates)
+
+
 def _pick_next_post(db: Session) -> Post | None:
     candidates = (
         db.query(Post)
@@ -425,6 +463,7 @@ async def _run_send_job() -> None:
         if success:
             cycle, idx = _get_or_create_cycle(db)
             _advance_cycle(db, cycle, idx)
+            _cache_next_post_id(db)
 
         _broadcast_sse(
             {
