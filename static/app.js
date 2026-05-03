@@ -167,7 +167,8 @@ async function loadNext() {
 
     if (next_run_at) {
       _nextRunAt = new Date(next_run_at).getTime();
-      const totalSecs = seconds_remaining || 5400;
+      const configuredMax = data.interval_max || 3600;
+      const totalSecs = seconds_remaining || configuredMax;
       _totalInterval = Math.max(totalSecs, 1);
       qs('#next-time-label').textContent = `Próximo às ${fmtTime(next_run_at)}`;
     }

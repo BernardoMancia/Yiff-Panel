@@ -101,10 +101,13 @@ def get_next(db: Session = Depends(get_db)):
         except ValueError:
             pass
 
+    from app.config import settings as _s
     return {
         "next_post": _serialize_post(next_post) if next_post else None,
         "next_run_at": next_run_at,
         "seconds_remaining": seconds_remaining,
+        "interval_min": _s.MIN_INTERVAL_SECONDS,
+        "interval_max": _s.MAX_INTERVAL_SECONDS,
     }
 
 
