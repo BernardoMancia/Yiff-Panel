@@ -110,15 +110,33 @@ def get_next(db: Session = Depends(get_db)):
 
 @router.get("/stats")
 def get_stats(db: Session = Depends(get_db)):
-    total_sent = db.query(Post).filter(Post.status == "sent").count()
+    from datetime import datetime, timezone
+    from app.database import SentRegistry
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    monthly = db.query(SentRegistry).filter(SentRegistry.sent_at >= month_start).all()
+    monthly_images = sum(1 for r in monthly if r.file_ext in ("jpg", "jpeg", "png"))
+    monthly_videos = sum(1 for r in monthly if r.file_ext in ("webm", "mp4"))
+    monthly_gifs = sum(1 for r in monthly if r.file_ext == "gif")
+    monthly_total = len(monthly)
+
+    total_ever = db.query(SentRegistry).count()
     total_queued = db.query(Post).filter(Post.status == "queued", Post.is_deleted == False).count()
     total_failed = db.query(Post).filter(Post.status == "failed").count()
     last_log = db.query(ScheduleLog).order_by(ScheduleLog.id.desc()).first()
     composition = analyze_queue_composition(db)
     return {
-        "total_sent": total_sent,
+        "total_sent": total_ever,
         "total_queued": total_queued,
         "total_failed": total_failed,
+        "monthly": {
+            "month": now.strftime("%B %Y"),
+            "total": monthly_total,
+            "images": monthly_images,
+            "videos": monthly_videos,
+            "gifs": monthly_gifs,
+        },
         "last_triggered_at": last_log.triggered_at.isoformat() if last_log and last_log.triggered_at else None,
         "queue_composition": composition,
     }

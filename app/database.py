@@ -98,6 +98,16 @@ class TagSuggestion(Base):
     reviewed_at = Column(DateTime, nullable=True)
 
 
+class SentRegistry(Base):
+    __tablename__ = "sent_registry"
+
+    id = Column(Integer, primary_key=True)
+    e621_id = Column(Integer, unique=True, nullable=False, index=True)
+    file_url = Column(String, nullable=True)
+    file_ext = Column(String(10), nullable=True)
+    sent_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def create_tables() -> None:
     Base.metadata.create_all(bind=engine)
 

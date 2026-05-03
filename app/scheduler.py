@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.database import AppState, Post, ScheduleLog, SessionLocal
+from app.database import AppState, Post, ScheduleLog, SentRegistry, SessionLocal
 from app.e621_client import e621_client
 from app.reaction_monitor import _check_reactions
 from app.telegram_sender import telegram_sender
@@ -122,6 +122,9 @@ def analyze_queue_composition(db: Session) -> dict:
 async def _insert_posts(db: Session, posts_data: list[dict]) -> int:
     """Insere posts únicos no banco, retorna quantidade adicionada."""
     from datetime import datetime, timezone
+    sent_ids = {
+        row[0] for row in db.query(SentRegistry.e621_id).all()
+    }
     existing = {
         row[0]: row[1]
         for row in db.query(Post.e621_id, Post.status).all()
@@ -132,6 +135,8 @@ async def _insert_posts(db: Session, posts_data: list[dict]) -> int:
     for raw in posts_data:
         normalized = e621_client.normalize(raw)
         eid = normalized["e621_id"]
+        if eid in sent_ids:
+            continue
         if eid in existing:
             status = existing[eid]
             if status in ("queued", "sent"):
@@ -154,7 +159,8 @@ async def _insert_posts(db: Session, posts_data: list[dict]) -> int:
 
 async def _refill_queue(db: Session) -> int:
     """Reabastece a fila com proporções-alvo: 60% imagens, 30% vídeos, 10% GIFs."""
-    from app.tag_manager import build_query
+    from app.tag_manager import build_query, get_mandatory_tags, get_blacklist_tags
+    from datetime import datetime, timezone
     custom_tags = build_query(db)
     comp = analyze_queue_composition(db)
     logger.info(
@@ -171,12 +177,39 @@ async def _refill_queue(db: Session) -> int:
     target_vid = int(_BATCH * _T_VID)
     target_gif = _BATCH - target_img - target_vid
 
+    # Remover excesso de imagens para abrir espaço ao rebalancear
+    if comp["total"] >= 15 and comp["images"] > target_img:
+        excess = comp["images"] - target_img
+        excess_posts = (
+            db.query(Post)
+            .filter(Post.status == "queued", Post.is_deleted == False, Post.file_ext.in_(list(_STATIC_EXTS)))
+            .order_by(Post.queued_at.asc())
+            .limit(excess)
+            .all()
+        )
+        for p in excess_posts:
+            p.status = "reset"
+            p.is_deleted = True
+        if excess_posts:
+            db.commit()
+            logger.info("Removed %d excess image posts for rebalancing", len(excess_posts))
+            comp = analyze_queue_composition(db)
+
     need_img = max(0, target_img - comp["images"])
     need_vid = max(0, target_vid - comp["videos"])
     need_gif = max(0, target_gif - comp["gifs"])
 
     logger.info("Targets — images: need %d, videos: need %d, gifs: need %d", need_img, need_vid, need_gif)
     total_added = 0
+
+    # Query simplificada para vídeo/GIF: só OR+blacklist, sem AND restritivos
+    mandatory = get_mandatory_tags(db)
+    blacklist = get_blacklist_tags(db)
+    simple_tags = " ".join(
+        [f"~{t}" for t in mandatory]
+        + [f"-{t}" for t in blacklist]
+        + ["order:random", "rating:e"]
+    )
 
     # ── Imagens ──
     if need_img > 0:
@@ -189,7 +222,7 @@ async def _refill_queue(db: Session) -> int:
     # ── Vídeos (WebM) ──
     if need_vid > 0:
         await asyncio.sleep(1.2)
-        vid_posts = await _fetch_by_type_retry("webm", custom_tags, limit=max(need_vid * 2, 50))
+        vid_posts = await _fetch_by_type_retry("webm", simple_tags, limit=max(need_vid * 3, 60))
         added = await _insert_posts(db, vid_posts[:need_vid])
         logger.info("Videos: inserted %d", added)
         total_added += added
@@ -197,7 +230,7 @@ async def _refill_queue(db: Session) -> int:
     # ── GIFs ──
     if need_gif > 0:
         await asyncio.sleep(1.2)
-        gif_posts = await _fetch_by_type_retry("gif", custom_tags, limit=max(need_gif * 3, 30))
+        gif_posts = await _fetch_by_type_retry("gif", simple_tags, limit=max(need_gif * 3, 30))
         added = await _insert_posts(db, gif_posts[:need_gif])
         logger.info("GIFs: inserted %d", added)
         total_added += added
@@ -373,6 +406,21 @@ async def _run_send_job() -> None:
         _set_state(db, "next_run_at", next_run.isoformat())
         _set_state(db, "last_post_id", str(next_post.id) if success else "")
         db.commit()
+
+        if success:
+            try:
+                existing_reg = db.query(SentRegistry).filter(SentRegistry.e621_id == next_post.e621_id).first()
+                if not existing_reg:
+                    db.add(SentRegistry(
+                        e621_id=next_post.e621_id,
+                        file_url=next_post.file_url,
+                        file_ext=next_post.file_ext,
+                        sent_at=now,
+                    ))
+                    db.commit()
+            except Exception as reg_exc:
+                logger.warning("Failed to register in SentRegistry: %s", reg_exc)
+                db.rollback()
 
         if success:
             cycle, idx = _get_or_create_cycle(db)
