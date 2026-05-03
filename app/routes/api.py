@@ -61,8 +61,20 @@ def get_history(limit: int = 20, db: Session = Depends(get_db)):
 
 @router.get("/queue")
 def get_queue(limit: int = 10, db: Session = Depends(get_db)):
-    posts = get_ordered_queue(db, limit=limit)
-    return [_serialize_post(p) for p in posts]
+    try:
+        posts = get_ordered_queue(db, limit=limit)
+        return [_serialize_post(p) for p in posts]
+    except Exception as exc:
+        import logging as _log
+        _log.getLogger(__name__).error("get_ordered_queue failed, falling back to FIFO: %s", exc)
+        posts = (
+            db.query(Post)
+            .filter(Post.status == "queued", Post.is_deleted == False)
+            .order_by(Post.queued_at.asc())
+            .limit(limit)
+            .all()
+        )
+        return [_serialize_post(p) for p in posts]
 
 
 @router.get("/post/{post_id}")
