@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import logging
 
-import httpx
-from telegram import Bot
+from telegram import Bot, ReactionTypeEmoji
 from telegram.error import TelegramError
 
 from app.config import settings
@@ -15,6 +14,12 @@ _MAX_DIRECT_SIZE = 50 * 1024 * 1024
 _VIDEO_EXTS = {"webm", "mp4"}
 _ANIM_EXTS = {"gif"}
 _PHOTO_EXTS = {"jpg", "jpeg", "png"}
+
+_AUTO_REACTIONS = [
+    ReactionTypeEmoji(emoji="❤️"),
+    ReactionTypeEmoji(emoji="🔥"),
+    ReactionTypeEmoji(emoji="🥰"),
+]
 
 
 class TelegramSender:
@@ -65,6 +70,7 @@ class TelegramSender:
                     connect_timeout=30,
                 )
             logger.info("Sent post e621#%s (%s) to Telegram — msg_id=%d", post.e621_id, ext, msg.message_id)
+            await _react_to_message(bot, chat_id, msg.message_id)
             return True, msg.message_id
         except TelegramError as exc:
             if "file is too big" in str(exc).lower() and post.sample_url and url != post.sample_url:
@@ -90,3 +96,15 @@ class TelegramSender:
 
 
 telegram_sender = TelegramSender()
+
+
+async def _react_to_message(bot: Bot, chat_id: str, message_id: int) -> None:
+    try:
+        await bot.set_message_reaction(
+            chat_id=chat_id,
+            message_id=message_id,
+            reaction=_AUTO_REACTIONS,
+            is_big=False,
+        )
+    except TelegramError as exc:
+        logger.warning("Could not set reactions on msg %d: %s", message_id, exc)
