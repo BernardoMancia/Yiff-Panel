@@ -244,15 +244,34 @@ async def _fetch_by_type_retry(file_type: str, custom_tags: str, limit: int = 50
     return []
 
 
+def _pick_next_post(db: Session) -> Post | None:
+    candidates = (
+        db.query(Post)
+        .filter(Post.status == "queued", Post.is_deleted == False)
+        .all()
+    )
+    if not candidates:
+        return None
+    images = [p for p in candidates if p.file_ext in _STATIC_EXTS]
+    videos = [p for p in candidates if p.file_ext in _VIDEO_EXTS]
+    gifs = [p for p in candidates if p.file_ext in _GIF_EXTS]
+    weights = (
+        (images, 0.60),
+        (videos, 0.30),
+        (gifs, 0.10),
+    )
+    available = [(pool, w) for pool, w in weights if pool]
+    if not available:
+        return random.choice(candidates)
+    pools, raw_weights = zip(*available)
+    chosen_pool = random.choices(pools, weights=raw_weights, k=1)[0]
+    return random.choice(chosen_pool)
+
+
 async def _run_send_job() -> None:
     db: Session = SessionLocal()
     try:
-        next_post = (
-            db.query(Post)
-            .filter(Post.status == "queued", Post.is_deleted == False)
-            .order_by(Post.queued_at.asc())
-            .first()
-        )
+        next_post = _pick_next_post(db)
 
         if next_post is None:
             added = await _refill_queue(db)
@@ -260,12 +279,7 @@ async def _run_send_job() -> None:
                 logger.warning("No posts available even after refill. Retrying in 5 minutes.")
                 _schedule_next(300)
                 return
-            next_post = (
-                db.query(Post)
-                .filter(Post.status == "queued", Post.is_deleted == False)
-                .order_by(Post.queued_at.asc())
-                .first()
-            )
+            next_post = _pick_next_post(db)
 
         if next_post is None:
             logger.error("Still no posts after refill. Retrying in 5 minutes.")

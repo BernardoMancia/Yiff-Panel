@@ -15,8 +15,8 @@ class Settings:
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
 
-    MIN_INTERVAL_SECONDS: int = int(os.getenv("MIN_INTERVAL_SECONDS", "3600"))
-    MAX_INTERVAL_SECONDS: int = int(os.getenv("MAX_INTERVAL_SECONDS", "5400"))
+    MIN_INTERVAL_SECONDS: int = int(os.getenv("MIN_INTERVAL_SECONDS", "3000"))
+    MAX_INTERVAL_SECONDS: int = int(os.getenv("MAX_INTERVAL_SECONDS", "3600"))
 
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./auto_yiff.db")
 
