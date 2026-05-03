@@ -15,7 +15,7 @@ def _get_token(request: Request) -> str | None:
 
 @router.post("/login")
 def login(body: dict, response: Response, db: Session = Depends(get_db)):
-    username = (body.get("username") or "").strip()
+    username = (body.get("username") or "").strip().lower().replace(" ", "_")
     password = body.get("password") or ""
     from app.database import AdminUser
     user = db.query(AdminUser).filter(AdminUser.username == username).first()
