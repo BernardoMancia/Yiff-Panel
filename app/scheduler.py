@@ -383,6 +383,22 @@ def get_ordered_queue(db: Session, limit: int = 10) -> list[Post]:
     return result[:limit]
 
 
+def _get_cached_next_post(db: Session) -> Post | None:
+    """Lê o post pré-selecionado cacheado no AppState e valida que ainda está na fila."""
+    row = db.query(AppState).filter(AppState.key == "next_post_id").first()
+    if not row or not row.value:
+        return None
+    try:
+        post_id = int(row.value)
+        return db.query(Post).filter(
+            Post.id == post_id,
+            Post.status == "queued",
+            Post.is_deleted == False,
+        ).first()
+    except (ValueError, Exception):
+        return None
+
+
 def _cache_next_post_id(db: Session) -> None:
     """Pré-seleciona e cacheia o ID do próximo post a ser enviado (read-only no ciclo)."""
     post = _preview_next_post(db)
@@ -454,7 +470,12 @@ def _pick_next_post(db: Session) -> Post | None:
 async def _run_send_job() -> None:
     db: Session = SessionLocal()
     try:
-        next_post = _pick_next_post(db)
+        # Usa o post pré-selecionado e exibido no dashboard
+        next_post = _get_cached_next_post(db)
+
+        if next_post is None:
+            # Cache vazio ou inválido — seleciona pelo ciclo
+            next_post = _pick_next_post(db)
 
         if next_post is None:
             added = await _refill_queue(db)
