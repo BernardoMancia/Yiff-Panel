@@ -4,10 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=www-data
-WorkingDirectory=/opt/auto-yiff
-EnvironmentFile=/opt/auto-yiff/.env
-ExecStart=/opt/auto-yiff/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+User=adm_luke
+WorkingDirectory=/home/adm_luke/prod/docker/auto-yiff
+EnvironmentFile=/home/adm_luke/prod/docker/auto-yiff/.env
+ExecStart=/home/adm_luke/prod/docker/auto-yiff/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 Restart=always
 RestartSec=10
 StandardOutput=journal
