@@ -38,23 +38,28 @@ class TelegramSender:
             return False, None
         bot = self._get_bot()
         chat_id = settings.TELEGRAM_CHAT_ID
+        thumb = post.sample_url or None
         try:
-            if ext in _VIDEO_EXTS:
+            if ext == "mp4":
                 msg = await bot.send_video(
                     chat_id=chat_id,
                     video=url,
+                    thumbnail=thumb,
+                    supports_streaming=True,
                     caption=None,
-                    read_timeout=60,
-                    write_timeout=60,
+                    read_timeout=90,
+                    write_timeout=90,
                     connect_timeout=30,
                 )
-            elif ext in _ANIM_EXTS:
+            elif ext in _VIDEO_EXTS or ext in _ANIM_EXTS:
+                # WebM e GIF: send_animation mostra inline com autoplay/loop
                 msg = await bot.send_animation(
                     chat_id=chat_id,
                     animation=url,
+                    thumbnail=thumb,
                     caption=None,
-                    read_timeout=60,
-                    write_timeout=60,
+                    read_timeout=90,
+                    write_timeout=90,
                     connect_timeout=30,
                 )
             else:
@@ -70,8 +75,10 @@ class TelegramSender:
             await _react_to_message(bot, chat_id, msg.message_id)
             return True, msg.message_id
         except TelegramError as exc:
-            if "file is too big" in str(exc).lower() and post.sample_url and url != post.sample_url:
-                logger.warning("File too big, retrying with sample URL for e621#%s", post.e621_id)
+            err = str(exc).lower()
+            # Fallback 1: arquivo muito grande → tenta sample como photo
+            if ("too big" in err or "file_size" in err) and post.sample_url and url != post.sample_url:
+                logger.warning("File too big, retrying with sample_url for e621#%s", post.e621_id)
                 try:
                     msg = await bot.send_photo(
                         chat_id=chat_id,
@@ -85,6 +92,24 @@ class TelegramSender:
                     return True, msg.message_id
                 except TelegramError as exc2:
                     logger.error("Retry also failed for e621#%s: %s", post.e621_id, exc2)
+                    return False, None
+            # Fallback 2: send_animation falhou → tenta send_video
+            if ext in _VIDEO_EXTS and "animation" not in err:
+                logger.warning("send_animation failed, trying send_video for e621#%s: %s", post.e621_id, exc)
+                try:
+                    msg = await bot.send_video(
+                        chat_id=chat_id,
+                        video=url,
+                        supports_streaming=True,
+                        caption=None,
+                        read_timeout=90,
+                        write_timeout=90,
+                        connect_timeout=30,
+                    )
+                    await _react_to_message(bot, chat_id, msg.message_id)
+                    return True, msg.message_id
+                except TelegramError as exc2:
+                    logger.error("send_video fallback also failed for e621#%s: %s", post.e621_id, exc2)
                     return False, None
             logger.error("TelegramError for e621#%s: %s", post.e621_id, exc)
             return False, None
