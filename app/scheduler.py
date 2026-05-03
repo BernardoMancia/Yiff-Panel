@@ -152,9 +152,11 @@ async def _refill_queue(db: Session) -> int:
 
 
 async def _refill_normal(db: Session) -> int:
+    from app.tag_manager import build_query
     logger.info("Refilling queue from e621 (normal mode)...")
     try:
-        posts_data = await e621_client.fetch_random_posts(limit=settings.E621_LIMIT)
+        custom_tags = build_query(db)
+        posts_data = await e621_client.fetch_random_posts(limit=settings.E621_LIMIT, custom_tags=custom_tags)
     except Exception as exc:
         logger.error("Failed to fetch from e621: %s", exc)
         return 0
@@ -164,12 +166,11 @@ async def _refill_normal(db: Session) -> int:
 
 
 async def _refill_animated(db: Session) -> int:
-    """Busca GIFs e vídeos para corrigir o excesso de imagens estáticas."""
+    from app.tag_manager import build_query
+    custom_tags = build_query(db)
     total_added = 0
-
-    # Busca GIFs
     try:
-        gif_posts = await e621_client.fetch_by_type("gif", limit=50)
+        gif_posts = await e621_client.fetch_by_type("gif", limit=50, custom_tags=custom_tags)
         added = await _insert_posts(db, gif_posts)
         logger.info("Animated boost (GIF): added %d posts", added)
         total_added += added

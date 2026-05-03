@@ -35,30 +35,34 @@ class E621Client:
             response.raise_for_status()
             return response.json()
 
-    async def fetch_posts(self, page: int = 1, limit: int = 100) -> list[dict]:
+    async def fetch_posts(self, page: int = 1, limit: int = 100, custom_tags: str | None = None) -> list[dict]:
+        tags = custom_tags if custom_tags else settings.E621_TAGS
         data = await self._get(
             "/posts.json",
-            params={
-                "tags": settings.E621_TAGS,
-                "limit": limit,
-                "page": page,
-            },
+            params={"tags": tags, "limit": limit, "page": page},
         )
         posts = data.get("posts", []) if isinstance(data, dict) else []
         return [p for p in posts if self._is_valid(p)]
 
-    async def fetch_random_posts(self, limit: int = 100) -> list[dict]:
+    async def fetch_random_posts(self, limit: int = 100, custom_tags: str | None = None) -> list[dict]:
         page = random.randint(1, 5)
-        return await self.fetch_posts(page=page, limit=limit)
+        return await self.fetch_posts(page=page, limit=limit, custom_tags=custom_tags)
 
-    async def fetch_by_type(self, file_type: str, limit: int = 50) -> list[dict]:
-        """Busca posts de um tipo específico (gif ou webm) para balancear a fila."""
-        if file_type == "gif":
-            tags = settings.E621_TAGS_GIF
-        elif file_type == "webm":
-            tags = settings.E621_TAGS_VIDEO
+    async def fetch_by_type(self, file_type: str, limit: int = 50, custom_tags: str | None = None) -> list[dict]:
+        if custom_tags:
+            if file_type == "gif":
+                tags = custom_tags.replace("order:random rating:e", "type:gif order:random rating:e")
+            elif file_type == "webm":
+                tags = custom_tags.replace("order:random rating:e", "type:webm order:random rating:e")
+            else:
+                return []
         else:
-            return []
+            if file_type == "gif":
+                tags = settings.E621_TAGS_GIF
+            elif file_type == "webm":
+                tags = settings.E621_TAGS_VIDEO
+            else:
+                return []
         page = random.randint(1, 4)
         async with self._build_client() as client:
             await asyncio.sleep(1.1)

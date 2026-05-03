@@ -178,22 +178,63 @@
       <h2 class="section-title">
         <span class="section-title__icon">🔍</span>
         Filtros Ativos
+        <span class="section-title__sub">clique × para remover · enter para adicionar</span>
       </h2>
       <div class="tags-panel">
-        <div class="tags-group">
-          <span class="tags-group__label">Inclui</span>
-          <div class="tags-group__chips" id="tags-included"><span class="tag-chip tag-chip--loading">⋯</span></div>
+
+        <!-- Obrigatórias -->
+        <div class="tags-group-block">
+          <div class="tags-group-header">
+            <span class="tags-group-title tags-group-title--required">🔒 Obrigatórias</span>
+            <span class="tags-group-hint">todas devem estar presentes</span>
+          </div>
+          <div class="tags-group__chips" id="tags-required"></div>
+          <div class="tag-add-row">
+            <input class="tag-add-input" id="input-required" type="text" placeholder="adicionar tag obrigatória..." autocomplete="off" />
+            <button class="tag-add-btn" onclick="addTagFromInput('required')">+</button>
+          </div>
         </div>
-        <div class="tags-group">
-          <span class="tags-group__label">Blacklist</span>
-          <div class="tags-group__chips" id="tags-blacklist"><span class="tag-chip tag-chip--loading">⋯</span></div>
+
+        <div class="tags-divider"></div>
+
+        <!-- OR (qualquer uma) -->
+        <div class="tags-group-block">
+          <div class="tags-group-header">
+            <span class="tags-group-title tags-group-title--or">🔀 OR — Qualquer uma</span>
+            <span class="tags-group-hint">basta ter ao menos uma</span>
+          </div>
+          <div class="tags-group__chips" id="tags-or"></div>
+          <div class="tag-add-row">
+            <input class="tag-add-input" id="input-or" type="text" placeholder="adicionar tag OR..." autocomplete="off" />
+            <button class="tag-add-btn" onclick="addTagFromInput('or')">+</button>
+          </div>
         </div>
+
+        <div class="tags-divider"></div>
+
+        <!-- Blacklist -->
+        <div class="tags-group-block">
+          <div class="tags-group-header">
+            <span class="tags-group-title tags-group-title--blacklist">🚫 Blacklist</span>
+            <span class="tags-group-hint">posts com essas tags são ignorados</span>
+          </div>
+          <div class="tags-group__chips" id="tags-blacklist"></div>
+          <div class="tag-add-row">
+            <input class="tag-add-input" id="input-blacklist" type="text" placeholder="adicionar à blacklist..." autocomplete="off" />
+            <button class="tag-add-btn" onclick="addTagFromInput('blacklist')">+</button>
+          </div>
+        </div>
+
+        <div class="tags-divider"></div>
+
+        <!-- Meta -->
         <div class="tags-group tags-group--meta">
           <span class="tags-group__label">Intervalo</span>
           <span class="tag-chip tag-chip--meta" id="tags-interval">—</span>
           <span class="tags-group__label" style="margin-left:12px">Balanceamento</span>
           <span class="tag-chip tag-chip--meta" id="tags-balance">—</span>
         </div>
+
       </div>
     </section>
 

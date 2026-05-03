@@ -274,25 +274,80 @@ function closeLightbox() {
 async function loadConfig() {
   try {
     const cfg = await fetch(API.config).then(r => r.json());
-
-    const incEl = qs('#tags-included');
-    incEl.innerHTML = cfg.search_tags.map(t => {
-      const cls = t.startsWith('~') ? 'tag-chip--or' : 'tag-chip--required';
-      const label = t.startsWith('~') ? t.slice(1) : t;
-      return `<span class="tag-chip ${cls}" title="${t.startsWith('~') ? 'OR' : 'Obrigatório'}">${label}</span>`;
-    }).join('');
-
-    const blEl = qs('#tags-blacklist');
-    blEl.innerHTML = cfg.blacklist.map(t =>
-      `<span class="tag-chip tag-chip--blacklist">−${t}</span>`
-    ).join('');
-
+    renderTagGroup('tags-required', cfg.required_tags || [], 'required', 'tag-chip--required');
+    renderTagGroup('tags-or', cfg.or_tags || [], 'or', 'tag-chip--or');
+    renderTagGroup('tags-blacklist', cfg.blacklist || [], 'blacklist', 'tag-chip--blacklist');
     qs('#tags-interval').textContent = cfg.interval;
     qs('#tags-balance').textContent = `boost > ${cfg.balance_threshold} imagens`;
   } catch (e) {
     console.warn('Config fetch failed', e);
   }
 }
+
+function renderTagGroup(containerId, tags, type, chipClass) {
+  const el = qs(`#${containerId}`);
+  if (!el) return;
+  if (!tags.length) {
+    el.innerHTML = '<span style="color:var(--text-muted);font-size:11px;font-style:italic">nenhuma</span>';
+    return;
+  }
+  el.innerHTML = tags.map(t => `
+    <span class="tag-chip ${chipClass}">
+      ${t}
+      <button class="tag-chip__remove" onclick="removeTagFromUI('${type}','${t}',this)" title="Remover">&times;</button>
+    </span>`).join('');
+}
+
+async function removeTagFromUI(type, tag, btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/config/tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'remove', type, tag }),
+    }).then(r => r.json());
+    if (res.ok) {
+      toast(`Tag removida: ${tag}`, 'success');
+      await loadConfig();
+    } else {
+      toast(`Erro: ${res.error}`, 'error');
+      btn.disabled = false;
+    }
+  } catch {
+    toast('Erro de conexão', 'error');
+    btn.disabled = false;
+  }
+}
+
+window.addTagFromInput = async function(type) {
+  const input = qs(`#input-${type}`);
+  const tag = (input?.value || '').trim().toLowerCase().replace(/^[~\-]+/, '');
+  if (!tag) return;
+  input.value = '';
+  try {
+    const res = await fetch('/api/config/tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'add', type, tag }),
+    }).then(r => r.json());
+    if (res.ok) {
+      toast(`Tag adicionada: ${tag}`, 'success');
+      await loadConfig();
+    } else {
+      toast(`Erro: ${res.error}`, 'error');
+    }
+  } catch {
+    toast('Erro de conexão', 'error');
+  }
+};
+
+['required','or','blacklist'].forEach(type => {
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && document.activeElement?.id === `input-${type}`) {
+      addTagFromInput(type);
+    }
+  });
+});
 
 async function loadQueue() {
   try {

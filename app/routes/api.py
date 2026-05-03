@@ -148,18 +148,35 @@ async def trigger_now(db: Session = Depends(get_db)):
 
 
 @router.get("/config")
-def get_config():
+def get_config(db: Session = Depends(get_db)):
     from app.config import settings
-    raw_tags = settings.E621_TAGS
-    tag_tokens = raw_tags.replace("order:random", "").replace("rating:e", "").split()
-    included = [t for t in tag_tokens if not t.startswith("-")]
-    excluded_api = [t.lstrip("-") for t in tag_tokens if t.startswith("-")]
-    blacklist_extra = sorted(
-        settings.E621_BLACKLIST - set(excluded_api)
-    )
+    from app.tag_manager import get_required_tags, get_or_tags, get_blacklist_tags
     return {
-        "search_tags": included,
-        "blacklist": sorted(set(excluded_api) | settings.E621_BLACKLIST),
+        "required_tags": get_required_tags(db),
+        "or_tags": get_or_tags(db),
+        "blacklist": get_blacklist_tags(db),
         "interval": f"{settings.MIN_INTERVAL_SECONDS // 60}min – {settings.MAX_INTERVAL_SECONDS // 60}min",
         "balance_threshold": f"{int(settings.BALANCE_IMAGE_THRESHOLD * 100)}%",
     }
+
+
+@router.post("/config/tags")
+def update_tags(body: dict, db: Session = Depends(get_db)):
+    from app.tag_manager import add_tag, remove_tag
+    action = body.get("action")
+    tag_type = body.get("type")
+    tag = (body.get("tag") or "").strip().lower().lstrip("~-")
+    if not tag:
+        return {"ok": False, "error": "tag vazia"}
+    if action not in ("add", "remove"):
+        return {"ok": False, "error": "action inválida"}
+    if tag_type not in ("required", "or", "blacklist"):
+        return {"ok": False, "error": "type inválido"}
+    try:
+        if action == "add":
+            add_tag(db, tag_type, tag)
+        else:
+            remove_tag(db, tag_type, tag)
+        return {"ok": True}
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}

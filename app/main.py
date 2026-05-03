@@ -23,6 +23,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     create_tables()
+    from app.database import SessionLocal
+    from app.tag_manager import init_tags
+    _db = SessionLocal()
+    try:
+        init_tags(_db)
+    finally:
+        _db.close()
     logger.info("Starting scheduler...")
     start_scheduler()
     yield
