@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,15 @@ from app.scheduler import analyze_queue_composition, subscribe_sse, unsubscribe_
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _require_admin(request: Request, db: Session = Depends(get_db)):
+    from app.auth import get_user_from_token
+    token = request.headers.get("X-Admin-Token") or request.cookies.get("admin_token")
+    user = get_user_from_token(db, token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Admin access required")
+    return user
 
 
 def _serialize_post(p: Post) -> dict:
@@ -141,14 +150,14 @@ async def sse_stream():
 
 
 @router.post("/trigger")
-async def trigger_now(db: Session = Depends(get_db)):
+async def trigger_now(request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
     from app.scheduler import _schedule_next
     _schedule_next(3)
     return {"status": "triggered", "message": "Job will run in ~3 seconds"}
 
 
 @router.get("/config")
-def get_config(db: Session = Depends(get_db)):
+def get_config(request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
     from app.config import settings
     from app.tag_manager import get_mandatory_tags, get_required_tags, get_or_tags, get_blacklist_tags
     return {
@@ -162,7 +171,7 @@ def get_config(db: Session = Depends(get_db)):
 
 
 @router.post("/config/tags")
-def update_tags(body: dict, db: Session = Depends(get_db)):
+def update_tags(body: dict, request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
     from app.tag_manager import add_tag, remove_tag
     action = body.get("action")
     tag_type = body.get("type")
@@ -181,3 +190,19 @@ def update_tags(body: dict, db: Session = Depends(get_db)):
         return {"ok": True}
     except ValueError as e:
         return {"ok": False, "error": str(e)}
+
+
+@router.post("/admin/reset-queue")
+def reset_queue(request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
+    deleted = (
+        db.query(Post)
+        .filter(Post.status == "queued", Post.is_deleted == False)
+        .count()
+    )
+    db.query(Post).filter(Post.status == "queued", Post.is_deleted == False).update(
+        {"is_deleted": True, "status": "reset"},
+        synchronize_session=False,
+    )
+    db.commit()
+    logger.warning("Admin reset queue: %d posts marked as reset.", deleted)
+    return {"ok": True, "removed_from_queue": deleted, "message": "Fila limpa. Novo reabastecimento será feito na próxima execução."}

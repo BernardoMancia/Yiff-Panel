@@ -8,7 +8,19 @@ const API = {
   stream: '/api/stream',
   trigger: '/api/trigger',
   config: '/api/config',
+  login: '/api/auth/login',
+  logout: '/api/auth/logout',
+  me: '/api/auth/me',
+  changePw: '/api/auth/change-password',
+  resetQueue: '/api/admin/reset-queue',
 };
+
+window._isAdmin = false;
+
+function _adminHeaders() {
+  const token = localStorage.getItem('admin_token');
+  return token ? { 'X-Admin-Token': token } : {};
+}
 
 let _currentPost = null;
 
@@ -297,7 +309,7 @@ function closeLightbox() {
 /* ─── Filter Tags ─── */
 async function loadConfig() {
   try {
-    const cfg = await fetch(API.config).then(r => r.json());
+    const cfg = await fetch(API.config, { headers: _adminHeaders() }).then(r => r.json());
     renderTagGroup('tags-mandatory', cfg.mandatory_tags || [], 'mandatory', 'tag-chip--mandatory');
     renderTagGroup('tags-required', cfg.required_tags || [], 'required', 'tag-chip--required');
     renderTagGroup('tags-or', cfg.or_tags || [], 'or', 'tag-chip--or');
@@ -415,7 +427,7 @@ qs('#btn-trigger').addEventListener('click', async () => {
   try {
     qs('#btn-trigger').disabled = true;
     qs('#btn-trigger').textContent = '⏳ Enviando...';
-    const res = await fetch(API.trigger, { method: 'POST' });
+    const res = await fetch(API.trigger, { method: 'POST', headers: _adminHeaders() });
     if (res.ok) {
       toast('Envio agendado para os próximos segundos!', 'success');
     } else {
@@ -479,21 +491,136 @@ function connectSSE() {
   };
 }
 
+/* ─── Auth ─── */
+async function checkAuth() {
+  const token = localStorage.getItem('admin_token');
+  if (!token) { applyRole(false, null); return; }
+  try {
+    const data = await fetch(API.me, { headers: _adminHeaders() }).then(r => r.json());
+    if (data.authenticated) {
+      window._isAdmin = true;
+      applyRole(true, data.display_name);
+      if (data.must_change_password) showChangePwModal();
+    } else {
+      localStorage.removeItem('admin_token');
+      applyRole(false, null);
+    }
+  } catch { applyRole(false, null); }
+}
+
+function applyRole(isAdmin, displayName) {
+  window._isAdmin = isAdmin;
+  const loginBtn = qs('#btn-login');
+  const userInfo = qs('#admin-user-info');
+  const adminPanel = qs('#admin-panel');
+  const tagsSection = qs('.tags-section');
+  const triggerBtn = qs('#btn-trigger');
+
+  if (isAdmin) {
+    loginBtn?.classList.add('hidden');
+    userInfo?.classList.remove('hidden');
+    if (qs('#admin-display-name')) qs('#admin-display-name').textContent = displayName;
+    if (qs('#admin-panel-user')) qs('#admin-panel-user').textContent = displayName;
+    adminPanel?.classList.remove('hidden');
+    tagsSection?.classList.remove('hidden');
+    if (triggerBtn) triggerBtn.style.display = '';
+    loadConfig();
+  } else {
+    loginBtn?.classList.remove('hidden');
+    userInfo?.classList.add('hidden');
+    adminPanel?.classList.add('hidden');
+    tagsSection?.classList.add('hidden');
+    if (triggerBtn) triggerBtn.style.display = 'none';
+  }
+}
+
+function showLoginModal() { qs('#modal-login')?.classList.remove('hidden'); qs('#login-username')?.focus(); }
+function hideLoginModal() { qs('#modal-login')?.classList.add('hidden'); qs('#login-error')?.classList.add('hidden'); }
+function showChangePwModal() { qs('#modal-change-pw')?.classList.remove('hidden'); qs('#cp-current')?.focus(); }
+
+async function submitLogin(e) {
+  e.preventDefault();
+  const username = qs('#login-username').value.trim();
+  const password = qs('#login-password').value;
+  const btn = qs('#btn-login-submit');
+  const errEl = qs('#login-error');
+  btn.disabled = true; btn.textContent = 'Entrando...';
+  try {
+    const res = await fetch(API.login, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    }).then(r => r.json());
+    if (res.ok) {
+      localStorage.setItem('admin_token', res.token);
+      hideLoginModal();
+      applyRole(true, res.display_name);
+      if (res.must_change_password) showChangePwModal();
+      toast(`Bem-vindo, ${res.display_name}!`, 'success');
+    } else {
+      errEl.textContent = res.error;
+      errEl.classList.remove('hidden');
+    }
+  } catch { errEl.textContent = 'Erro de conexão'; errEl.classList.remove('hidden'); }
+  btn.disabled = false; btn.textContent = 'Entrar';
+  return false;
+}
+
+async function logoutAdmin() {
+  await fetch(API.logout, { method: 'POST', headers: _adminHeaders() }).catch(() => {});
+  localStorage.removeItem('admin_token');
+  applyRole(false, null);
+  toast('Sessão encerrada', 'info');
+}
+
+async function submitChangePassword(e) {
+  e.preventDefault();
+  const current = qs('#cp-current').value;
+  const newPw = qs('#cp-new').value;
+  const confirm = qs('#cp-confirm').value;
+  const errEl = qs('#cp-error');
+  if (newPw !== confirm) { errEl.textContent = 'As senhas não coincidem'; errEl.classList.remove('hidden'); return false; }
+  try {
+    const res = await fetch(API.changePw, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ..._adminHeaders() },
+      body: JSON.stringify({ current_password: current, new_password: newPw }),
+    }).then(r => r.json());
+    if (res.ok) {
+      qs('#modal-change-pw').classList.add('hidden');
+      toast('Senha alterada com sucesso!', 'success');
+    } else { errEl.textContent = res.error; errEl.classList.remove('hidden'); }
+  } catch { errEl.textContent = 'Erro de conexão'; errEl.classList.remove('hidden'); }
+  return false;
+}
+
+window.confirmResetQueue = async function() {
+  if (!confirm('Tem certeza? Isso vai limpar TODOS os posts em fila (não afeta o canal).')) return;
+  const btn = qs('#btn-reset-queue');
+  btn.disabled = true; btn.textContent = '⏳ Resetando...';
+  try {
+    const res = await fetch(API.resetQueue, { method: 'POST', headers: _adminHeaders() }).then(r => r.json());
+    if (res.ok) {
+      toast(`Fila resetada! ${res.removed_from_queue} posts removidos.`, 'success');
+      loadQueue();
+      loadStats();
+    } else { toast('Erro ao resetar', 'error'); }
+  } catch { toast('Erro de conexão', 'error'); }
+  btn.disabled = false; btn.textContent = '🗑️ Resetar Fila de Imagens';
+};
+
 /* ─── Init ─── */
 async function init() {
-  await Promise.all([loadStats(), loadNext(), loadHistory(), loadQueue(), loadConfig()]);
+  await checkAuth();
+  await Promise.all([loadStats(), loadNext(), loadHistory(), loadQueue()]);
   startCountdown();
   connectSSE();
 
   setInterval(loadStats, 30_000);
   setInterval(loadQueue, 30_000);
 
-  // Lightbox events
   qs('#lightbox-close').addEventListener('click', closeLightbox);
   qs('#lightbox-backdrop').addEventListener('click', closeLightbox);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
 
-  // Lookup global para abrir lightbox por ID do post (usado nos onclick inline)
   window._postCache = {};
   window._openPostById = (id) => {
     const post = window._postCache[id];

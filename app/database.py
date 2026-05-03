@@ -68,6 +68,26 @@ class AppState(Base):
     value = Column(Text, nullable=True)
 
 
+class AdminUser(Base):
+    __tablename__ = "admin_users"
+
+    id = Column(Integer, primary_key=True)
+    username = Column(String(50), unique=True, nullable=False)
+    display_name = Column(String(100), nullable=False)
+    password_hash = Column(String(300), nullable=False)
+    must_change_password = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class AdminSession(Base):
+    __tablename__ = "admin_sessions"
+
+    token = Column(String(64), primary_key=True)
+    username = Column(String(50), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def create_tables() -> None:
     Base.metadata.create_all(bind=engine)
 

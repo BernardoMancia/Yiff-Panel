@@ -25,9 +25,11 @@ async def lifespan(app: FastAPI):
     create_tables()
     from app.database import SessionLocal
     from app.tag_manager import init_tags
+    from app.auth import init_admin
     _db = SessionLocal()
     try:
         init_tags(_db)
+        init_admin(_db)
     finally:
         _db.close()
     logger.info("Starting scheduler...")
@@ -52,8 +54,10 @@ app.add_middleware(
 )
 
 from app.routes.api import router as api_router
+from app.routes.auth_routes import router as auth_router
 from app.routes.dashboard import router as dashboard_router
 
 app.include_router(api_router, prefix="/api")
+app.include_router(auth_router, prefix="/api/auth")
 app.include_router(dashboard_router)
 app.mount("/static", StaticFiles(directory="static"), name="static")
