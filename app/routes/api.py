@@ -150,8 +150,9 @@ async def trigger_now(db: Session = Depends(get_db)):
 @router.get("/config")
 def get_config(db: Session = Depends(get_db)):
     from app.config import settings
-    from app.tag_manager import get_required_tags, get_or_tags, get_blacklist_tags
+    from app.tag_manager import get_mandatory_tags, get_required_tags, get_or_tags, get_blacklist_tags
     return {
+        "mandatory_tags": get_mandatory_tags(db),
         "required_tags": get_required_tags(db),
         "or_tags": get_or_tags(db),
         "blacklist": get_blacklist_tags(db),
@@ -170,7 +171,7 @@ def update_tags(body: dict, db: Session = Depends(get_db)):
         return {"ok": False, "error": "tag vazia"}
     if action not in ("add", "remove"):
         return {"ok": False, "error": "action inválida"}
-    if tag_type not in ("required", "or", "blacklist"):
+    if tag_type not in ("mandatory", "required", "or", "blacklist"):
         return {"ok": False, "error": "type inválido"}
     try:
         if action == "add":

@@ -9,6 +9,7 @@ from app.database import AppState
 
 logger = logging.getLogger(__name__)
 
+_KEY_MANDATORY = "tag_mandatory"
 _KEY_REQUIRED = "tag_required"
 _KEY_OR = "tag_or"
 _KEY_BLACKLIST = "tag_blacklist"
@@ -34,41 +35,55 @@ def _write(db: Session, key: str, tags: list[str]) -> None:
     db.commit()
 
 
-def _defaults_from_settings() -> tuple[list[str], list[str], list[str]]:
+def _defaults_from_settings() -> tuple[list[str], list[str], list[str], list[str]]:
     from app.config import settings
     tokens = settings.E621_TAGS.split()
-    required = [t for t in tokens if not t.startswith(("~", "-")) and ":" not in t]
+    mandatory = ["male", "gay"]
+    required = [t for t in tokens if not t.startswith(("~", "-")) and ":" not in t and t not in mandatory]
     or_tags = [t[1:] for t in tokens if t.startswith("~")]
     blacklist = [t[1:] for t in tokens if t.startswith("-")]
-    return required, or_tags, blacklist
+    return mandatory, required, or_tags, blacklist
 
 
 def init_tags(db: Session) -> None:
-    required, or_tags, blacklist = _defaults_from_settings()
+    mandatory, required, or_tags, blacklist = _defaults_from_settings()
     for key, default in (
+        (_KEY_MANDATORY, mandatory),
         (_KEY_REQUIRED, required),
         (_KEY_OR, or_tags),
         (_KEY_BLACKLIST, blacklist),
     ):
         if _read(db, key) is None:
             _write(db, key, default)
+
+    mand_set = set(_read(db, _KEY_MANDATORY) or [])
+    req = _read(db, _KEY_REQUIRED) or []
+    cleaned = [t for t in req if t not in mand_set]
+    if len(cleaned) != len(req):
+        _write(db, _KEY_REQUIRED, cleaned)
+
     logger.info("Tag manager initialized.")
 
 
+def get_mandatory_tags(db: Session) -> list[str]:
+    return _read(db, _KEY_MANDATORY) or _defaults_from_settings()[0]
+
+
 def get_required_tags(db: Session) -> list[str]:
-    return _read(db, _KEY_REQUIRED) or _defaults_from_settings()[0]
+    return _read(db, _KEY_REQUIRED) or _defaults_from_settings()[1]
 
 
 def get_or_tags(db: Session) -> list[str]:
-    return _read(db, _KEY_OR) or _defaults_from_settings()[1]
+    return _read(db, _KEY_OR) or _defaults_from_settings()[2]
 
 
 def get_blacklist_tags(db: Session) -> list[str]:
-    return _read(db, _KEY_BLACKLIST) or _defaults_from_settings()[2]
+    return _read(db, _KEY_BLACKLIST) or _defaults_from_settings()[3]
 
 
 def build_query(db: Session, extra: str = "") -> str:
-    parts = get_required_tags(db)
+    parts = get_mandatory_tags(db)
+    parts += get_required_tags(db)
     parts += [f"~{t}" for t in get_or_tags(db)]
     parts += [f"-{t}" for t in get_blacklist_tags(db)]
     if extra:
@@ -78,7 +93,12 @@ def build_query(db: Session, extra: str = "") -> str:
 
 
 def add_tag(db: Session, tag_type: str, tag: str) -> None:
-    key = {"required": _KEY_REQUIRED, "or": _KEY_OR, "blacklist": _KEY_BLACKLIST}.get(tag_type)
+    key = {
+        "mandatory": _KEY_MANDATORY,
+        "required": _KEY_REQUIRED,
+        "or": _KEY_OR,
+        "blacklist": _KEY_BLACKLIST,
+    }.get(tag_type)
     if not key:
         raise ValueError(f"Invalid tag_type: {tag_type}")
     tag = tag.strip().lower().lstrip("~-")
@@ -91,7 +111,12 @@ def add_tag(db: Session, tag_type: str, tag: str) -> None:
 
 
 def remove_tag(db: Session, tag_type: str, tag: str) -> None:
-    key = {"required": _KEY_REQUIRED, "or": _KEY_OR, "blacklist": _KEY_BLACKLIST}.get(tag_type)
+    key = {
+        "mandatory": _KEY_MANDATORY,
+        "required": _KEY_REQUIRED,
+        "or": _KEY_OR,
+        "blacklist": _KEY_BLACKLIST,
+    }.get(tag_type)
     if not key:
         raise ValueError(f"Invalid tag_type: {tag_type}")
     tag = tag.strip().lower().lstrip("~-")

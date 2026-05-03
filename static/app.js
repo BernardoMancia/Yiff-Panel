@@ -298,6 +298,7 @@ function closeLightbox() {
 async function loadConfig() {
   try {
     const cfg = await fetch(API.config).then(r => r.json());
+    renderTagGroup('tags-mandatory', cfg.mandatory_tags || [], 'mandatory', 'tag-chip--mandatory');
     renderTagGroup('tags-required', cfg.required_tags || [], 'required', 'tag-chip--required');
     renderTagGroup('tags-or', cfg.or_tags || [], 'or', 'tag-chip--or');
     renderTagGroup('tags-blacklist', cfg.blacklist || [], 'blacklist', 'tag-chip--blacklist');
@@ -365,7 +366,7 @@ window.addTagFromInput = async function(type) {
   }
 };
 
-['required','or','blacklist'].forEach(type => {
+['mandatory','required','or','blacklist'].forEach(type => {
   document.addEventListener('keydown', e => {
     if (e.key === 'Enter' && document.activeElement?.id === `input-${type}`) {
       addTagFromInput(type);

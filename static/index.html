@@ -182,10 +182,25 @@
       </h2>
       <div class="tags-panel">
 
-        <!-- Obrigatórias -->
+        <!-- Fixas em Todos -->
         <div class="tags-group-block">
           <div class="tags-group-header">
-            <span class="tags-group-title tags-group-title--required">🔒 Obrigatórias</span>
+            <span class="tags-group-title tags-group-title--mandatory">📌 Fixas em Todos</span>
+            <span class="tags-group-hint">todas presentes em absolutamente todos os posts</span>
+          </div>
+          <div class="tags-group__chips" id="tags-mandatory"></div>
+          <div class="tag-add-row">
+            <input class="tag-add-input" id="input-mandatory" type="text" placeholder="adicionar tag fixa..." autocomplete="off" />
+            <button class="tag-add-btn" onclick="addTagFromInput('mandatory')">+</button>
+          </div>
+        </div>
+
+        <div class="tags-divider"></div>
+
+        <!-- Ao Menos Uma -->
+        <div class="tags-group-block">
+          <div class="tags-group-header">
+            <span class="tags-group-title tags-group-title--required">🔒 Ao Menos Uma</span>
             <span class="tags-group-hint">ao menos uma deve estar presente</span>
           </div>
           <div class="tags-group__chips" id="tags-required"></div>
