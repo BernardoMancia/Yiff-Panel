@@ -327,6 +327,62 @@ def _advance_cycle(db: Session, cycle: list[str], idx: int) -> None:
     db.commit()
 
 
+def get_ordered_queue(db: Session, limit: int = 10) -> list[Post]:
+    """Retorna posts na ordem que serão enviados pelo ciclo (não FIFO)."""
+    candidates = (
+        db.query(Post)
+        .filter(Post.status == "queued", Post.is_deleted == False)
+        .all()
+    )
+    if not candidates:
+        return []
+
+    cycle, idx = _get_or_create_cycle(db)
+
+    images = [p for p in candidates if p.file_ext in _STATIC_EXTS]
+    videos = [p for p in candidates if p.file_ext in _VIDEO_EXTS]
+    gifs = [p for p in candidates if p.file_ext in _GIF_EXTS]
+
+    random.shuffle(images)
+    random.shuffle(videos)
+    random.shuffle(gifs)
+
+    img_ptr = vid_ptr = gif_ptr = 0
+    result: list[Post] = []
+    current_idx = idx
+
+    for _ in range(limit * 3):
+        if len(result) >= limit:
+            break
+        slot_type = cycle[current_idx % len(cycle)]
+        current_idx += 1
+
+        picked = None
+        if slot_type == "image" and img_ptr < len(images):
+            picked = images[img_ptr]; img_ptr += 1
+        elif slot_type == "video" and vid_ptr < len(videos):
+            picked = videos[vid_ptr]; vid_ptr += 1
+        elif slot_type == "gif" and gif_ptr < len(gifs):
+            picked = gifs[gif_ptr]; gif_ptr += 1
+        else:
+            # tipo não disponível — pula para próximo slot
+            continue
+
+        result.append(picked)
+
+    # Preenche restantes de qualquer tipo se ciclo esgotou opções
+    used_ids = {p.id for p in result}
+    for pool in (images, videos, gifs):
+        for p in pool:
+            if len(result) >= limit:
+                break
+            if p.id not in used_ids:
+                result.append(p)
+                used_ids.add(p.id)
+
+    return result[:limit]
+
+
 def _cache_next_post_id(db: Session) -> None:
     """Pré-seleciona e cacheia o ID do próximo post a ser enviado (read-only no ciclo)."""
     post = _preview_next_post(db)

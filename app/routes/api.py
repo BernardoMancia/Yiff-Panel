@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.database import AppState, Post, ScheduleLog, get_db
-from app.scheduler import analyze_queue_composition, subscribe_sse, unsubscribe_sse
+from app.scheduler import analyze_queue_composition, subscribe_sse, unsubscribe_sse, get_ordered_queue
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -61,13 +61,7 @@ def get_history(limit: int = 20, db: Session = Depends(get_db)):
 
 @router.get("/queue")
 def get_queue(limit: int = 10, db: Session = Depends(get_db)):
-    posts = (
-        db.query(Post)
-        .filter(Post.status == "queued", Post.is_deleted == False)
-        .order_by(Post.queued_at.asc())
-        .limit(limit)
-        .all()
-    )
+    posts = get_ordered_queue(db, limit=limit)
     return [_serialize_post(p) for p in posts]
 
 
