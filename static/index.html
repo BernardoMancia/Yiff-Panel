@@ -33,7 +33,7 @@
       <div class="header__auth" id="header-auth">
         <button class="btn-login" id="btn-login" onclick="showLoginModal()">🔑 Admin</button>
         <div class="admin-user hidden" id="admin-user-info">
-          <span class="admin-user__name" id="admin-display-name"></span>
+          <span class="admin-user__name">🔑 Administrador</span>
           <button class="btn-logout" onclick="logoutAdmin()">Sair</button>
         </div>
       </div>
@@ -51,7 +51,7 @@
       <form class="modal-form" onsubmit="return submitLogin(event)">
         <div class="form-group">
           <label class="form-label">Usuário</label>
-          <input class="form-input" id="login-username" type="text" autocomplete="username" placeholder="luke_arwolf" required />
+          <input class="form-input" id="login-username" type="text" autocomplete="username" placeholder="usuário" required />
         </div>
         <div class="form-group">
           <label class="form-label">Senha</label>
@@ -89,6 +89,30 @@
       </form>
     </div>
   </div>
+
+  <!-- Modal Sugestão de TAG (convidado) -->
+  <div class="modal-overlay hidden" id="modal-suggestion" role="dialog" aria-modal="true">
+    <div class="modal-box glass-card">
+      <div class="modal-header">
+        <span class="modal-icon">💡</span>
+        <h2 class="modal-title">Sugerir uma TAG</h2>
+        <button class="modal-close" onclick="hideSuggestionModal()">&times;</button>
+      </div>
+      <p class="modal-desc">Sugira uma tag do e621 para incluir no filtro <em>OR — Qualquer uma</em>. O administrador avaliará a sugestão.</p>
+      <form class="modal-form" onsubmit="return submitSuggestion(event)">
+        <div class="form-group">
+          <label class="form-label">Tag do e621</label>
+          <input class="form-input" id="suggestion-tag" type="text" placeholder="ex: dragon, wolf, kobold..." autocomplete="off" required />
+        </div>
+        <div class="form-error hidden" id="suggestion-error"></div>
+        <div class="form-success hidden" id="suggestion-success">✅ Sugestão enviada! O administrador vai avaliar.</div>
+        <button class="btn-primary" type="submit" id="btn-suggestion-submit">Enviar Sugestão</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Botão flutuante de sugestão (todos) -->
+  <button class="btn-suggest-fab" id="btn-suggest-fab" onclick="showSuggestionModal()" title="Sugerir uma TAG">💡 Dicas de Tag</button>
 
   <main class="main container">
 
@@ -148,13 +172,21 @@
     <section class="admin-panel glass-card hidden" id="admin-panel" aria-label="Painel Administrativo">
       <h2 class="section-title">
         <span class="section-title__icon">⚙️</span>
-        Painel Admin — <span id="admin-panel-user"></span>
+        Painel Administrativo
       </h2>
       <div class="admin-actions">
         <button class="btn-danger" id="btn-reset-queue" onclick="confirmResetQueue()">
           🗑️ Resetar Fila de Imagens
         </button>
         <span class="admin-action-hint">Limpa os posts em fila e busca novos com os filtros atuais. <strong>Nunca altera o canal.</strong></span>
+      </div>
+
+      <!-- Sugestões de Tags Pendentes -->
+      <div class="suggestions-section" id="suggestions-section">
+        <h3 class="suggestions-title">💡 Sugestões de Tags Pendentes <span class="suggestions-count hidden" id="suggestions-count"></span></h3>
+        <div class="suggestions-list" id="suggestions-list">
+          <span class="suggestions-empty">Nenhuma sugestão pendente.</span>
+        </div>
       </div>
     </section>
 

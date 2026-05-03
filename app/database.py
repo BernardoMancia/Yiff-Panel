@@ -88,6 +88,16 @@ class AdminSession(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class TagSuggestion(Base):
+    __tablename__ = "tag_suggestions"
+
+    id = Column(Integer, primary_key=True)
+    tag = Column(String(100), nullable=False)
+    status = Column(String(20), default="pending")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    reviewed_at = Column(DateTime, nullable=True)
+
+
 def create_tables() -> None:
     Base.metadata.create_all(bind=engine)
 

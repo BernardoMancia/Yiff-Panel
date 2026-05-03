@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 
 from telegram import Bot, ReactionTypeEmoji
 from telegram.error import TelegramError
@@ -15,11 +16,7 @@ _VIDEO_EXTS = {"webm", "mp4"}
 _ANIM_EXTS = {"gif"}
 _PHOTO_EXTS = {"jpg", "jpeg", "png"}
 
-_AUTO_REACTIONS = [
-    ReactionTypeEmoji(emoji="❤️"),
-    ReactionTypeEmoji(emoji="🔥"),
-    ReactionTypeEmoji(emoji="🥰"),
-]
+_REACTION_POOL = ["❤", "🔥", "🥰", "👍", "🐾"]
 
 
 class TelegramSender:
@@ -84,6 +81,7 @@ class TelegramSender:
                         write_timeout=60,
                         connect_timeout=30,
                     )
+                    await _react_to_message(bot, chat_id, msg.message_id)
                     return True, msg.message_id
                 except TelegramError as exc2:
                     logger.error("Retry also failed for e621#%s: %s", post.e621_id, exc2)
@@ -99,12 +97,14 @@ telegram_sender = TelegramSender()
 
 
 async def _react_to_message(bot: Bot, chat_id: str, message_id: int) -> None:
+    emoji = random.choice(_REACTION_POOL)
     try:
         await bot.set_message_reaction(
             chat_id=chat_id,
             message_id=message_id,
-            reaction=_AUTO_REACTIONS,
-            is_big=False,
+            reaction=[ReactionTypeEmoji(emoji=emoji)],
+            is_big=True,
         )
+        logger.info("Reacted to msg %d with %s", message_id, emoji)
     except TelegramError as exc:
-        logger.warning("Could not set reactions on msg %d: %s", message_id, exc)
+        logger.warning("Could not set reaction on msg %d: %s", message_id, exc)

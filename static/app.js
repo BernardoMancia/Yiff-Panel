@@ -247,16 +247,18 @@ function openLightbox(post) {
     vid.loop = true;
     vid.muted = true;
     vid.setAttribute('playsinline', '');
-    vid.style.maxWidth = '88vw';
-    vid.style.maxHeight = '70vh';
-    vid.style.borderRadius = 'var(--radius-lg)';
+    vid.style.cssText = 'max-width:88vw;max-height:70vh;border-radius:var(--radius-lg)';
 
     const src = document.createElement('source');
     src.src = useUrl;
     src.type = mimeType;
     vid.appendChild(src);
 
-    vid.onerror = () => {
+    const fallbackLink = document.createElement('div');
+    fallbackLink.style.cssText = 'text-align:center;padding:12px;color:var(--text-muted);font-size:12px;margin-top:8px';
+    fallbackLink.innerHTML = `<a href="${useUrl}" target="_blank" rel="noopener" style="color:var(--neon-cyan)">🎬 Abrir vídeo direto ↗</a>`;
+
+    const handleVideoError = () => {
       mediaEl.innerHTML = '';
       if (post.sample_url) {
         const img = document.createElement('img');
@@ -265,12 +267,16 @@ function openLightbox(post) {
         mediaEl.appendChild(img);
       }
       const notice = document.createElement('div');
-      notice.style.cssText = 'text-align:center;padding:12px;color:var(--text-muted);font-size:12px';
-      notice.innerHTML = `Vídeo não suportado neste navegador. <a href="${useUrl}" target="_blank" rel="noopener" style="color:var(--neon-cyan)">Abrir vídeo direto ↗</a>`;
-      mediaEl.after(notice);
+      notice.style.cssText = 'text-align:center;padding:8px;color:var(--text-muted);font-size:11px';
+      notice.innerHTML = `Vídeo não suportado neste navegador — <a href="${useUrl}" target="_blank" rel="noopener" style="color:var(--neon-cyan)">Abrir direto ↗</a>`;
+      mediaEl.appendChild(notice);
     };
 
+    src.addEventListener('error', handleVideoError);
+    vid.addEventListener('error', handleVideoError);
+
     mediaEl.appendChild(vid);
+    mediaEl.appendChild(fallbackLink);
     vid.load();
   } else {
     const img = document.createElement('img');
@@ -519,12 +525,11 @@ function applyRole(isAdmin, displayName) {
   if (isAdmin) {
     loginBtn?.classList.add('hidden');
     userInfo?.classList.remove('hidden');
-    if (qs('#admin-display-name')) qs('#admin-display-name').textContent = displayName;
-    if (qs('#admin-panel-user')) qs('#admin-panel-user').textContent = displayName;
     adminPanel?.classList.remove('hidden');
     tagsSection?.classList.remove('hidden');
     if (triggerBtn) triggerBtn.style.display = '';
     loadConfig();
+    loadSuggestions();
   } else {
     loginBtn?.classList.remove('hidden');
     userInfo?.classList.add('hidden');
@@ -634,3 +639,80 @@ function _cachePost(post) {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+/* ─── Suggestions ─── */
+function showSuggestionModal() {
+  qs('#suggestion-tag').value = '';
+  qs('#suggestion-error').classList.add('hidden');
+  qs('#suggestion-success').classList.add('hidden');
+  qs('#modal-suggestion').classList.remove('hidden');
+  qs('#suggestion-tag').focus();
+}
+function hideSuggestionModal() { qs('#modal-suggestion').classList.add('hidden'); }
+
+async function submitSuggestion(e) {
+  e.preventDefault();
+  const tag = qs('#suggestion-tag').value.trim();
+  const errEl = qs('#suggestion-error');
+  const sucEl = qs('#suggestion-success');
+  const btn = qs('#btn-suggestion-submit');
+  errEl.classList.add('hidden'); sucEl.classList.add('hidden');
+  btn.disabled = true; btn.textContent = 'Enviando...';
+  try {
+    const res = await fetch('/api/suggestions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tag }),
+    }).then(r => r.json());
+    if (res.ok) {
+      sucEl.classList.remove('hidden');
+      qs('#suggestion-tag').value = '';
+    } else {
+      errEl.textContent = res.error;
+      errEl.classList.remove('hidden');
+    }
+  } catch { errEl.textContent = 'Erro de conexão'; errEl.classList.remove('hidden'); }
+  btn.disabled = false; btn.textContent = 'Enviar Sugestão';
+  return false;
+}
+
+async function loadSuggestions() {
+  try {
+    const list = await fetch('/api/suggestions', { headers: _adminHeaders() }).then(r => r.json());
+    const el = qs('#suggestions-list');
+    const countEl = qs('#suggestions-count');
+    if (!el) return;
+    if (!list.length) {
+      el.innerHTML = '<span class="suggestions-empty">Nenhuma sugestão pendente.</span>';
+      countEl?.classList.add('hidden');
+      return;
+    }
+    countEl.textContent = list.length;
+    countEl?.classList.remove('hidden');
+    el.innerHTML = list.map(s => `
+      <div class="suggestion-item" id="sug-${s.id}">
+        <span class="suggestion-tag">${s.tag}</span>
+        <button class="btn-accept" onclick="acceptSuggestion(${s.id}, '${s.tag}')">✅ Aceitar</button>
+        <button class="btn-reject" onclick="rejectSuggestion(${s.id})">❌ Rejeitar</button>
+      </div>
+    `).join('');
+  } catch { /* silencioso */ }
+}
+
+async function acceptSuggestion(id, tag) {
+  const res = await fetch(`/api/suggestions/${id}/accept`, { method: 'POST', headers: _adminHeaders() }).then(r => r.json());
+  if (res.ok) {
+    qs(`#sug-${id}`)?.remove();
+    toast(`Tag "${tag}" adicionada ao OR!`, 'success');
+    loadConfig();
+    loadSuggestions();
+  } else { toast(res.error, 'error'); }
+}
+
+async function rejectSuggestion(id) {
+  const res = await fetch(`/api/suggestions/${id}/reject`, { method: 'POST', headers: _adminHeaders() }).then(r => r.json());
+  if (res.ok) {
+    qs(`#sug-${id}`)?.remove();
+    toast('Sugestão rejeitada.', 'info');
+    loadSuggestions();
+  } else { toast(res.error, 'error'); }
+}

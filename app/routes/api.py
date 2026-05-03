@@ -206,3 +206,57 @@ def reset_queue(request: Request, db: Session = Depends(get_db), _=Depends(_requ
     db.commit()
     logger.warning("Admin reset queue: %d posts marked as reset.", deleted)
     return {"ok": True, "removed_from_queue": deleted, "message": "Fila limpa. Novo reabastecimento será feito na próxima execução."}
+
+
+@router.post("/suggestions")
+def submit_suggestion(body: dict, db: Session = Depends(get_db)):
+    from app.database import TagSuggestion
+    tag = (body.get("tag") or "").strip().lower().lstrip("~-")
+    if not tag or len(tag) < 2:
+        return {"ok": False, "error": "Tag inválida (mín. 2 caracteres)"}
+    if len(tag) > 80:
+        return {"ok": False, "error": "Tag muito longa"}
+    existing = db.query(TagSuggestion).filter(
+        TagSuggestion.tag == tag,
+        TagSuggestion.status == "pending",
+    ).first()
+    if existing:
+        return {"ok": False, "error": "Essa tag já foi sugerida e está aguardando revisão"}
+    db.add(TagSuggestion(tag=tag))
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/suggestions")
+def list_suggestions(request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
+    from app.database import TagSuggestion
+    rows = db.query(TagSuggestion).filter(TagSuggestion.status == "pending").order_by(TagSuggestion.id.desc()).all()
+    return [{"id": r.id, "tag": r.tag, "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]
+
+
+@router.post("/suggestions/{suggestion_id}/accept")
+def accept_suggestion(suggestion_id: int, request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
+    from app.database import TagSuggestion
+    from app.tag_manager import add_tag
+    from datetime import datetime, timezone
+    row = db.query(TagSuggestion).filter(TagSuggestion.id == suggestion_id).first()
+    if not row:
+        return {"ok": False, "error": "Sugestão não encontrada"}
+    add_tag(db, "or", row.tag)
+    row.status = "accepted"
+    row.reviewed_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True, "tag": row.tag}
+
+
+@router.post("/suggestions/{suggestion_id}/reject")
+def reject_suggestion(suggestion_id: int, request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
+    from app.database import TagSuggestion
+    from datetime import datetime, timezone
+    row = db.query(TagSuggestion).filter(TagSuggestion.id == suggestion_id).first()
+    if not row:
+        return {"ok": False, "error": "Sugestão não encontrada"}
+    row.status = "rejected"
+    row.reviewed_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True}
