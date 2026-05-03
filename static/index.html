@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Auto-Yiff — Dashboard</title>
+  <meta name="description" content="Dashboard em tempo real do bot Auto-Yiff: histórico de envios, fila e countdown para o próximo post." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- Background particles -->
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow bg-glow--1" aria-hidden="true"></div>
+  <div class="bg-glow bg-glow--2" aria-hidden="true"></div>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header__inner container">
+      <div class="header__brand">
+        <span class="header__logo">🦊</span>
+        <h1 class="header__title">AUTO<span class="neon-text">YIFF</span></h1>
+        <span class="header__version">v1.0</span>
+      </div>
+      <div class="header__status">
+        <span class="status-dot" id="status-dot"></span>
+        <span class="status-label" id="status-label">Conectando...</span>
+        <span class="header__divider">|</span>
+        <span class="header__source">e621.net</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="main container">
+
+    <!-- Stats Bar -->
+    <section class="stats-bar" id="stats-bar" aria-label="Estatísticas gerais">
+      <div class="stat-card">
+        <span class="stat-card__icon">📤</span>
+        <div>
+          <div class="stat-card__value" id="stat-sent">—</div>
+          <div class="stat-card__label">Enviados</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <span class="stat-card__icon">📋</span>
+        <div>
+          <div class="stat-card__value" id="stat-queued">—</div>
+          <div class="stat-card__label">Na fila</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <span class="stat-card__icon">⏱️</span>
+        <div>
+          <div class="stat-card__value" id="stat-interval">1h – 1h30</div>
+          <div class="stat-card__label">Intervalo</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <span class="stat-card__icon">❌</span>
+        <div>
+          <div class="stat-card__value" id="stat-failed">—</div>
+          <div class="stat-card__label">Falhas</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Composição de mídia na fila -->
+    <section class="composition-bar glass-card" id="composition-section" aria-label="Composição da fila">
+      <div class="composition-bar__label">
+        <span class="composition-bar__title">
+          <span>🧠</span> Inteligência de Variedade
+        </span>
+        <span class="composition-bar__mode" id="comp-mode"></span>
+      </div>
+      <div class="composition-bar__track">
+        <div class="composition-bar__seg composition-bar__seg--img" id="comp-seg-img" title="Imagens estáticas"></div>
+        <div class="composition-bar__seg composition-bar__seg--gif" id="comp-seg-gif" title="GIFs"></div>
+        <div class="composition-bar__seg composition-bar__seg--vid" id="comp-seg-vid" title="Vídeos"></div>
+      </div>
+      <div class="composition-bar__legend">
+        <span class="comp-legend comp-legend--img" id="comp-label-img">🖼 —%</span>
+        <span class="comp-legend comp-legend--gif" id="comp-label-gif">🎞 —%</span>
+        <span class="comp-legend comp-legend--vid" id="comp-label-vid">🎬 —%</span>
+      </div>
+    </section>
+
+    <!-- Next Post + Countdown -->
+    <section class="next-section" aria-label="Próximo envio">
+      <div class="next-card glass-card">
+        <div class="next-card__header">
+          <h2 class="section-title">
+            <span class="section-title__icon">🎯</span>
+            Próximo Envio
+          </h2>
+          <button class="btn-trigger" id="btn-trigger" title="Forçar envio agora">
+            ⚡ Enviar agora
+          </button>
+        </div>
+
+        <div class="next-card__body">
+          <!-- Preview -->
+          <div class="next-preview" id="next-preview">
+            <div class="next-preview__placeholder" id="next-placeholder">
+              <span class="next-preview__icon">🖼️</span>
+              <span>Carregando...</span>
+            </div>
+            <img class="next-preview__img hidden" id="next-img" alt="Próxima mídia" />
+            <div class="next-preview__badge" id="next-ext"></div>
+          </div>
+
+          <!-- Countdown -->
+          <div class="countdown-wrap">
+            <div class="countdown" id="countdown-display">
+              <div class="countdown__segment">
+                <span class="countdown__num" id="cd-hours">00</span>
+                <span class="countdown__label">h</span>
+              </div>
+              <span class="countdown__sep">:</span>
+              <div class="countdown__segment">
+                <span class="countdown__num" id="cd-minutes">00</span>
+                <span class="countdown__label">m</span>
+              </div>
+              <span class="countdown__sep">:</span>
+              <div class="countdown__segment">
+                <span class="countdown__num" id="cd-seconds">00</span>
+                <span class="countdown__label">s</span>
+              </div>
+            </div>
+            <div class="countdown__progress">
+              <div class="countdown__bar" id="countdown-bar"></div>
+            </div>
+            <div class="countdown__next-time" id="next-time-label">—</div>
+          </div>
+        </div>
+
+        <!-- Post meta -->
+        <div class="next-card__meta" id="next-meta">
+          <span class="meta-badge" id="next-id">e621#—</span>
+          <span class="meta-badge meta-badge--score" id="next-score">⬆ —</span>
+          <span class="meta-badge meta-badge--fav" id="next-fav">♥ —</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Grid: History + Queue -->
+    <div class="grid-two">
+
+      <!-- History -->
+      <section class="panel glass-card" aria-label="Histórico de envios">
+        <h2 class="section-title">
+          <span class="section-title__icon">📜</span>
+          Últimos Enviados
+        </h2>
+        <div class="media-grid" id="history-grid">
+          <div class="loading-row">Carregando histórico...</div>
+        </div>
+      </section>
+
+      <!-- Queue -->
+      <section class="panel glass-card" aria-label="Próximos 10 na fila">
+        <h2 class="section-title">
+          <span class="section-title__icon">⏳</span>
+          Próximas 10 na Fila
+          <span class="section-title__count" id="queue-count-badge"></span>
+        </h2>
+        <div class="queue-list" id="queue-list">
+          <div class="loading-row">Carregando fila...</div>
+        </div>
+      </section>
+
+    </div>
+
+  </main>
+
+  <!-- Toast container -->
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
+
+  <footer class="footer">
+    <div class="container">
+      <span>Auto-Yiff — Bot Telegram · e621.net</span>
+      <span class="footer__divider">·</span>
+      <span>Feral · Gay · Only machos</span>
+    </div>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
