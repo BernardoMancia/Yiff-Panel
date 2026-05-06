@@ -98,9 +98,9 @@ def analyze_queue_composition(db: Session) -> dict:
     balance_ok = (
         total < settings.BALANCE_MIN_QUEUE_SIZE
         or (
-            image_ratio <= 0.70
-            and video_ratio >= 0.15
-            and gif_ratio >= 0.05
+            image_ratio <= 0.30
+            and video_ratio >= 0.40
+            and gif_ratio >= 0.20
         )
     )
 
@@ -157,7 +157,7 @@ async def _insert_posts(db: Session, posts_data: list[dict]) -> int:
 
 
 async def _refill_queue(db: Session) -> int:
-    """Reabastece a fila com proporções-alvo: 60% imagens, 30% vídeos, 10% GIFs."""
+    """Reabastece a fila com proporções-alvo: 50% vídeos, 30% GIFs, 20% imagens."""
     from app.tag_manager import build_query, get_mandatory_tags, get_blacklist_tags
     from datetime import datetime, timezone
     custom_tags = build_query(db)
@@ -167,9 +167,9 @@ async def _refill_queue(db: Session) -> int:
         comp["total"], comp["image_ratio"] * 100, comp["video_ratio"] * 100, comp["gif_ratio"] * 100,
     )
 
-    _T_IMG = 0.60
-    _T_VID = 0.30
-    _T_GIF = 0.10
+    _T_IMG = 0.20
+    _T_VID = 0.50
+    _T_GIF = 0.30
     _BATCH = 100
 
     target_img = int(_BATCH * _T_IMG)
@@ -283,7 +283,7 @@ async def _fetch_by_type_retry(file_type: str, custom_tags: str, limit: int = 50
 _SEND_CYCLE_KEY = "send_cycle"
 _SEND_CYCLE_IDX_KEY = "send_cycle_idx"
 
-_BASE_CYCLE = ["image"] * 6 + ["video"] * 3 + ["gif"] * 1
+_BASE_CYCLE = ["image"] * 2 + ["video"] * 5 + ["gif"] * 3
 
 
 def _get_or_create_cycle(db: Session) -> tuple[list[str], int]:

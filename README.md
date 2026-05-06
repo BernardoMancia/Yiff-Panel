@@ -1,28 +1,36 @@
 # Auto-Yiff
 
-> **Telegram Bot + Web Dashboard** that automatically fetches feral gay artwork from [e621.net](https://e621.net) and sends it to a Telegram channel at random intervals between **1 hour and 1 hour 30 minutes**.
+> **Telegram Bot + Web Dashboard** that automatically fetches artwork from [e621.net](https://e621.net) and sends it to a Telegram channel at random intervals between **1 hour and 1 hour 30 minutes**.
 
 ---
 
 ## Features
 
-- 🦊 Fetches posts from e621.net via official API (feral male gay content)
+- 🦊 Fetches posts from e621.net via official API with fully configurable search tags
 - 📤 Sends media to Telegram (photo / video / GIF) with **no caption**
 - ⏱ Random interval between 1h and 1h30min per send
-- 🔄 Auto-refills queue when empty
+- ⚡ Priority ingest queue — send media directly via a Telegram group to jump the queue
+- 🔄 Auto-refills queue when empty with balanced media types
 - 📊 Real-time web dashboard with countdown, history and queue preview
 - 🔴 Server-Sent Events (SSE) for live updates without page refresh
+- 🏷️ Tag management via admin panel (mandatory, required, OR, blacklist)
+- 👍👎 Reaction-based auto-removal (configurable dislike threshold)
 - 🗄 SQLite database with soft-delete and audit logs
 - 🐧 systemd service for 24/7 Linux server operation
 
 ---
 
-## Tags Used
+## Tag System
 
-```
-feral male gay duo animal_genitalia animal_penis anthro
-equine_penis equine_genitalia canine_genitalia order:random rating:e
-```
+Tags are **fully configurable** through the admin dashboard. You can define:
+
+| Tag Type | Description |
+|---|---|
+| **Mandatory** | Tags that MUST appear in search results |
+| **Required (OR)** | At least one of these must match |
+| **Blacklist** | Posts with these tags are excluded |
+
+Tags can be added, removed and managed in real-time via the web panel without restarting the bot.
 
 ---
 
@@ -91,6 +99,7 @@ make logs
 | `E621_API_KEY` | API key from your e621 profile | `xxxxxx` |
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather | `123456:ABC...` |
 | `TELEGRAM_CHAT_ID` | Target channel/group ID | `-1001234567890` |
+| `TELEGRAM_INGEST_CHAT_ID` | Priority ingest group ID | `-5001234567890` |
 | `HOST` | Server bind host | `0.0.0.0` |
 | `PORT` | Server port | `8000` |
 | `MIN_INTERVAL_SECONDS` | Minimum interval (default: 3600) | `3600` |
@@ -116,20 +125,37 @@ make logs
 
 # Auto-Yiff (PT-BR)
 
-> **Bot Telegram + Dashboard Web** que busca artes feral gay do [e621.net](https://e621.net) automaticamente e envia para um canal do Telegram em intervalos aleatórios entre **1 hora e 1 hora e 30 minutos**.
+> **Bot Telegram + Dashboard Web** que busca artes do [e621.net](https://e621.net) automaticamente e envia para um canal do Telegram em intervalos aleatórios entre **1 hora e 1 hora e 30 minutos**.
 
 ---
 
 ## Funcionalidades
 
-- 🦊 Busca posts do e621.net via API oficial (conteúdo feral male gay)
+- 🦊 Busca posts do e621.net via API oficial com tags de busca totalmente configuráveis
 - 📤 Envia mídias para o Telegram (foto / vídeo / GIF) **sem legenda**
 - ⏱ Intervalo aleatório entre 1h e 1h30 por envio
-- 🔄 Reabastece a fila automaticamente quando vazia
+- ⚡ Fila prioritária de ingest — envie mídias direto por um grupo do Telegram para furar a fila
+- 🔄 Reabastece a fila automaticamente quando vazia com tipos de mídia balanceados
 - 📊 Dashboard web em tempo real com countdown, histórico e prévia da fila
 - 🔴 Server-Sent Events (SSE) para atualizações ao vivo sem recarregar
+- 🏷️ Gerenciamento de tags pelo painel admin (obrigatórias, requeridas, OR, blacklist)
+- 👍👎 Remoção automática por reações (threshold de dislikes configurável)
 - 🗄 Banco SQLite com soft-delete e logs de auditoria
 - 🐧 Serviço systemd para operação 24/7 no servidor Linux
+
+---
+
+## Sistema de Tags
+
+As tags são **totalmente configuráveis** pelo painel de administração. Você pode definir:
+
+| Tipo de Tag | Descrição |
+|---|---|
+| **Obrigatórias** | Tags que DEVEM aparecer nos resultados |
+| **Requeridas (OR)** | Pelo menos uma delas deve estar presente |
+| **Blacklist** | Posts com essas tags são excluídos |
+
+Tags podem ser adicionadas, removidas e gerenciadas em tempo real pelo painel web sem reiniciar o bot.
 
 ---
 
