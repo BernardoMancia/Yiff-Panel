@@ -424,19 +424,21 @@ async function loadQueue() {
 
 function queueItem(post, idx) {
   const isNext = idx === 0;
+  const isPriority = post.is_priority || post.source === 'ingest';
   const src = post.preview_url || post.sample_url || '';
   const pos = idx + 1;
+  const idLabel = isPriority ? `INGEST #${Math.abs(post.e621_id)}` : `e621#${post.e621_id}`;
   return `
-    <div class="queue-item${isNext ? ' queue-item--next' : ''}" onclick="window._openPostById(${post.id})" style="cursor:pointer">
-      <span class="queue-item__pos${isNext ? ' queue-item__pos--next' : ''}">${isNext ? '▶' : pos}</span>
+    <div class="queue-item${isNext ? ' queue-item--next' : ''}${isPriority ? ' queue-item--priority' : ''}" onclick="window._openPostById(${post.id})" style="cursor:pointer">
+      <span class="queue-item__pos${isNext ? ' queue-item__pos--next' : ''}${isPriority ? ' queue-item__pos--priority' : ''}">${isPriority ? '⚡' : isNext ? '▶' : pos}</span>
       ${src
-        ? `<img class="queue-item__thumb" src="${src}" alt="e621#${post.e621_id}" loading="lazy" />`
-        : `<div class="queue-item__thumb"></div>`}
+        ? `<img class="queue-item__thumb" src="${src}" alt="${idLabel}" loading="lazy" />`
+        : `<div class="queue-item__thumb" style="background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--text-muted)">📎 Local</div>`}
       <div class="queue-item__info">
-        <div class="queue-item__id">e621#${post.e621_id}</div>
-        <div class="queue-item__meta">⬆ ${post.score ?? 0} · ♥ ${post.fav_count ?? 0} · ${extBadge(post.file_ext)}</div>
+        <div class="queue-item__id">${idLabel}</div>
+        <div class="queue-item__meta">${isPriority ? '⚡ Prioridade' : `⬆ ${post.score ?? 0} · ♥ ${post.fav_count ?? 0}`} · ${extBadge(post.file_ext)}</div>
       </div>
-      ${isNext ? '<span class="queue-item__badge">PRÓXIMO</span>' : ''}
+      ${isPriority ? '<span class="queue-item__badge queue-item__badge--priority">⚡ PRIORIDADE</span>' : isNext ? '<span class="queue-item__badge">PRÓXIMO</span>' : ''}
     </div>`;
 }
 
@@ -498,6 +500,14 @@ function connectSSE() {
           loadQueue();
           loadNext();
         }, 2000);
+      }
+      if (data.event === 'priority_added') {
+        toast('⚡ Mídia prioritária adicionada à fila!', 'info');
+        setTimeout(() => {
+          loadQueue();
+          loadNext();
+          loadStats();
+        }, 1000);
       }
     } catch (err) { /* keepalive */ }
   };

@@ -11,6 +11,7 @@ class Settings:
     E621_API_KEY: str = os.getenv("E621_API_KEY", "")
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
+    TELEGRAM_INGEST_CHAT_ID: str = os.getenv("TELEGRAM_INGEST_CHAT_ID", "-5174519393")
 
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))

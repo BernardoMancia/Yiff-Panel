@@ -483,6 +483,27 @@ body {
   border: 1px solid rgba(168,85,247,0.3); font-weight: 700;
   flex-shrink: 0; letter-spacing: 0.5px;
 }
+.queue-item--priority {
+  border-color: rgba(251,191,36,0.5);
+  background: rgba(251,191,36,0.06);
+  animation: priority-glow 2s ease-in-out infinite alternate;
+}
+@keyframes priority-glow {
+  from { box-shadow: 0 0 0 rgba(251,191,36,0); }
+  to   { box-shadow: 0 0 12px rgba(251,191,36,0.15); }
+}
+.queue-item--priority:hover {
+  border-color: rgba(251,191,36,0.7);
+  background: rgba(251,191,36,0.1);
+}
+.queue-item__pos--priority {
+  color: #fbbf24; font-weight: 700; font-size: 14px;
+}
+.queue-item__badge--priority {
+  background: rgba(251,191,36,0.18); color: #fbbf24;
+  border: 1px solid rgba(251,191,36,0.45);
+  text-shadow: 0 0 8px rgba(251,191,36,0.4);
+}
 
 /* ─── Toast ─── */
 .toast-container {

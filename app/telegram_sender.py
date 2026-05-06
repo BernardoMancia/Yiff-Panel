@@ -32,10 +32,11 @@ class TelegramSender:
 
     async def send_media(self, post: Post) -> tuple[bool, int | None]:
         ext = (post.file_ext or "").lower()
+        is_local = getattr(post, "source", "e621") == "ingest"
         url = post.file_url
         file_size = post.file_size or 0
 
-        if file_size > _MAX_DOWNLOAD_SIZE and post.sample_url:
+        if not is_local and file_size > _MAX_DOWNLOAD_SIZE and post.sample_url:
             url = post.sample_url
             file_size = 0
 
@@ -45,11 +46,13 @@ class TelegramSender:
 
         bot = self._get_bot()
         chat_id = settings.TELEGRAM_CHAT_ID
-        thumb = post.sample_url or None
+        thumb = post.sample_url or None if not is_local else None
 
         try:
+            if is_local:
+                return await self._send_local_media(bot, chat_id, post, ext)
+
             if ext in _VIDEO_EXTS:
-                # Baixa e envia como bytes — único modo que o Telegram exibe player inline para WebM
                 video_bytes = await _download_file(url)
                 if video_bytes:
                     input_file = InputFile(io.BytesIO(video_bytes), filename="video.mp4")
@@ -92,7 +95,6 @@ class TelegramSender:
 
         except TelegramError as exc:
             err = str(exc).lower()
-            # Fallback: arquivo grande ou erro → envia sample como foto
             if post.sample_url and url != post.sample_url:
                 logger.warning("Primary send failed (%s), retrying with sample_url for e621#%s", exc, post.e621_id)
                 try:
@@ -112,6 +114,66 @@ class TelegramSender:
             return False, None
         except Exception as exc:
             logger.exception("Unexpected error sending e621#%s: %s", post.e621_id, exc)
+            return False, None
+
+    async def _send_local_media(
+        self, bot: Bot, chat_id: str, post: Post, ext: str
+    ) -> tuple[bool, int | None]:
+        import os
+        filepath = post.file_url
+        if not filepath or not os.path.isfile(filepath):
+            logger.error("Local file missing for ingest post #%d: %s", post.id, filepath)
+            return False, None
+
+        with open(filepath, "rb") as f:
+            data = f.read()
+
+        try:
+            if ext in _VIDEO_EXTS:
+                input_file = InputFile(io.BytesIO(data), filename=f"video.{ext}")
+                msg = await bot.send_video(
+                    chat_id=chat_id,
+                    video=input_file,
+                    supports_streaming=True,
+                    caption=None,
+                    read_timeout=120,
+                    write_timeout=120,
+                    connect_timeout=30,
+                )
+            elif ext in _ANIM_EXTS:
+                input_file = InputFile(io.BytesIO(data), filename="animation.gif")
+                msg = await bot.send_animation(
+                    chat_id=chat_id,
+                    animation=input_file,
+                    caption=None,
+                    read_timeout=90,
+                    write_timeout=90,
+                    connect_timeout=30,
+                )
+            else:
+                input_file = InputFile(io.BytesIO(data), filename=f"photo.{ext}")
+                msg = await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=input_file,
+                    caption=None,
+                    read_timeout=60,
+                    write_timeout=60,
+                    connect_timeout=30,
+                )
+
+            logger.info("Sent local ingest post #%d (%s) — msg_id=%d", post.id, ext, msg.message_id)
+            await _react_to_message(bot, chat_id, msg.message_id)
+
+            try:
+                os.remove(filepath)
+                logger.info("Cleaned up local file: %s", filepath)
+            except OSError as rm_exc:
+                logger.warning("Could not delete %s: %s", filepath, rm_exc)
+
+            return True, msg.message_id
+
+        except TelegramError as exc:
+            logger.error("Failed to send local ingest post #%d: %s", post.id, exc)
             return False, None
 
 

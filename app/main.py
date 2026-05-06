@@ -32,6 +32,8 @@ async def lifespan(app: FastAPI):
         init_admin(_db)
     finally:
         _db.close()
+    import os
+    os.makedirs("media_cache", exist_ok=True)
     logger.info("Starting scheduler...")
     start_scheduler()
     yield

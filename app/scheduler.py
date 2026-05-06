@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import AppState, Post, ScheduleLog, SentRegistry, SessionLocal
 from app.e621_client import e621_client
-from app.reaction_monitor import _check_reactions
 from app.telegram_sender import telegram_sender
 
 logger = logging.getLogger(__name__)
@@ -361,7 +360,7 @@ def get_ordered_queue(db: Session, limit: int = 10) -> list[Post]:
 
 
 def _compute_queue_order(db: Session) -> list[Post]:
-    """Calcula a ordem da fila baseada no ciclo. Embaralha UMA VEZ e persiste."""
+    """Calcula a ordem da fila baseada no ciclo. Prioridades sempre no topo."""
     candidates = (
         db.query(Post)
         .filter(Post.status == "queued", Post.is_deleted == False)
@@ -370,43 +369,49 @@ def _compute_queue_order(db: Session) -> list[Post]:
     if not candidates:
         return []
 
+    priority_posts = sorted(
+        [p for p in candidates if p.is_priority],
+        key=lambda p: p.queued_at or datetime.min.replace(tzinfo=timezone.utc),
+    )
+    normal_posts = [p for p in candidates if not p.is_priority]
+
     cycle, idx = _get_or_create_cycle(db)
-    images = [p for p in candidates if p.file_ext in _STATIC_EXTS]
-    videos = [p for p in candidates if p.file_ext in _VIDEO_EXTS]
-    gifs = [p for p in candidates if p.file_ext in _GIF_EXTS]
+    images = [p for p in normal_posts if p.file_ext in _STATIC_EXTS]
+    videos = [p for p in normal_posts if p.file_ext in _VIDEO_EXTS]
+    gifs = [p for p in normal_posts if p.file_ext in _GIF_EXTS]
 
     random.shuffle(images)
     random.shuffle(videos)
     random.shuffle(gifs)
 
     img_ptr = vid_ptr = gif_ptr = 0
-    result: list[Post] = []
+    normal_ordered: list[Post] = []
     current_idx = idx
-    total = len(candidates)
+    total_normal = len(normal_posts)
 
-    for _ in range(total * 3):
-        if len(result) >= total:
+    for _ in range(total_normal * 3):
+        if len(normal_ordered) >= total_normal:
             break
         slot_type = cycle[current_idx % len(cycle)]
         current_idx += 1
 
         if slot_type == "image" and img_ptr < len(images):
-            result.append(images[img_ptr]); img_ptr += 1
+            normal_ordered.append(images[img_ptr]); img_ptr += 1
         elif slot_type == "video" and vid_ptr < len(videos):
-            result.append(videos[vid_ptr]); vid_ptr += 1
+            normal_ordered.append(videos[vid_ptr]); vid_ptr += 1
         elif slot_type == "gif" and gif_ptr < len(gifs):
-            result.append(gifs[gif_ptr]); gif_ptr += 1
+            normal_ordered.append(gifs[gif_ptr]); gif_ptr += 1
         else:
             continue
 
-    used_ids = {p.id for p in result}
+    used_ids = {p.id for p in normal_ordered}
     for pool in (images, videos, gifs):
         for p in pool:
             if p.id not in used_ids:
-                result.append(p)
+                normal_ordered.append(p)
                 used_ids.add(p.id)
 
-    return result
+    return priority_posts + normal_ordered
 
 
 def _persist_queue_order(db: Session, posts: list[Post]) -> None:
@@ -493,6 +498,19 @@ def _preview_next_post(db: Session) -> Post | None:
 
 
 def _pick_next_post(db: Session) -> Post | None:
+    priority = (
+        db.query(Post)
+        .filter(
+            Post.status == "queued",
+            Post.is_deleted == False,
+            Post.is_priority == True,
+        )
+        .order_by(Post.queued_at.asc())
+        .first()
+    )
+    if priority:
+        return priority
+
     candidates = (
         db.query(Post)
         .filter(Post.status == "queued", Post.is_deleted == False)
@@ -515,7 +533,6 @@ def _pick_next_post(db: Session) -> Post | None:
     if slot_type == "gif" and gifs:
         return random.choice(gifs)
 
-    # Fallback se o tipo do slot não tem post disponível
     for pool in (images, videos, gifs):
         if pool:
             return random.choice(pool)
@@ -577,7 +594,7 @@ async def _run_send_job() -> None:
         _set_state(db, "last_post_id", str(next_post.id) if success else "")
         db.commit()
 
-        if success:
+        if success and getattr(next_post, "source", "e621") != "ingest":
             try:
                 existing_reg = db.query(SentRegistry).filter(SentRegistry.e621_id == next_post.e621_id).first()
                 if not existing_reg:
@@ -593,8 +610,9 @@ async def _run_send_job() -> None:
                 db.rollback()
 
         if success:
-            cycle, idx = _get_or_create_cycle(db)
-            _advance_cycle(db, cycle, idx)
+            if getattr(next_post, "source", "e621") != "ingest":
+                cycle, idx = _get_or_create_cycle(db)
+                _advance_cycle(db, cycle, idx)
             _remove_from_queue_order(db, next_post.id)
             _cache_next_post_id(db)
 
@@ -671,12 +689,12 @@ def start_scheduler() -> None:
         logger.info("Scheduler starting — first job in %.0f seconds", delay)
         _schedule_next(int(delay))
 
-        # Verificador de reações a cada 5 minutos
+        from app.unified_poller import poll_telegram_updates
         _scheduler.add_job(
-            _check_reactions,
+            poll_telegram_updates,
             "interval",
-            minutes=5,
-            id="reaction_monitor",
+            seconds=5,
+            id="unified_poller",
             replace_existing=True,
             max_instances=1,
         )

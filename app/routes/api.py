@@ -42,6 +42,8 @@ def _serialize_post(p: Post) -> dict:
         "fav_count": p.fav_count,
         "status": p.status,
         "tags": tags_list,
+        "is_priority": getattr(p, "is_priority", False),
+        "source": getattr(p, "source", "e621"),
         "queued_at": p.queued_at.isoformat() if p.queued_at else None,
         "sent_at": p.sent_at.isoformat() if p.sent_at else None,
     }
