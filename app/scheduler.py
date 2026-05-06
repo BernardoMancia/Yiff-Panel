@@ -542,11 +542,9 @@ def _pick_next_post(db: Session) -> Post | None:
 async def _run_send_job() -> None:
     db: Session = SessionLocal()
     try:
-        # Usa o post pré-selecionado e exibido no dashboard
         next_post = _get_cached_next_post(db)
 
         if next_post is None:
-            # Cache vazio ou inválido — seleciona pelo ciclo
             next_post = _pick_next_post(db)
 
         if next_post is None:
@@ -562,23 +560,52 @@ async def _run_send_job() -> None:
             _schedule_next(300)
             return
 
-        # Analisa fila ANTES de enviar — reabastece em background se necessário
         composition = analyze_queue_composition(db)
         remaining_after_send = composition["total"] - 1
         if remaining_after_send <= 5:
             logger.info("Queue running low (%d left). Pre-fetching...", remaining_after_send)
             asyncio.create_task(_background_refill())
 
-        success, message_id = await telegram_sender.send_media(next_post)
-        now = datetime.now(timezone.utc)
-        if success:
-            next_post.status = "sent"
-            next_post.sent_at = now
-            if message_id:
-                next_post.message_id = message_id
+        is_group = bool(getattr(next_post, "media_group_id", None))
+        is_ingest = getattr(next_post, "source", "e621") == "ingest"
+
+        if is_group:
+            group_posts = (
+                db.query(Post)
+                .filter(
+                    Post.media_group_id == next_post.media_group_id,
+                    Post.status == "queued",
+                    Post.is_deleted == False,
+                )
+                .order_by(Post.id.asc())
+                .all()
+            )
+            success, message_ids = await telegram_sender.send_media_group_posts(group_posts)
+            now = datetime.now(timezone.utc)
+            for i, p in enumerate(group_posts):
+                if success:
+                    p.status = "sent"
+                    p.sent_at = now
+                    if i < len(message_ids):
+                        p.message_id = message_ids[i]
+                else:
+                    p.status = "failed"
+                    p.is_deleted = True
+
+            message_id = message_ids[0] if message_ids else None
+            sent_post = next_post
         else:
-            next_post.status = "failed"
-            next_post.is_deleted = True
+            success, message_id = await telegram_sender.send_media(next_post)
+            now = datetime.now(timezone.utc)
+            if success:
+                next_post.status = "sent"
+                next_post.sent_at = now
+                if message_id:
+                    next_post.message_id = message_id
+            else:
+                next_post.status = "failed"
+                next_post.is_deleted = True
+            sent_post = next_post
 
         interval = _next_interval()
         next_run = now + timedelta(seconds=interval)
@@ -586,22 +613,22 @@ async def _run_send_job() -> None:
         log = ScheduleLog(
             triggered_at=now,
             next_run_at=next_run,
-            post_id=next_post.id,
+            post_id=sent_post.id,
             success=success,
         )
         db.add(log)
         _set_state(db, "next_run_at", next_run.isoformat())
-        _set_state(db, "last_post_id", str(next_post.id) if success else "")
+        _set_state(db, "last_post_id", str(sent_post.id) if success else "")
         db.commit()
 
-        if success and getattr(next_post, "source", "e621") != "ingest":
+        if success and not is_ingest:
             try:
-                existing_reg = db.query(SentRegistry).filter(SentRegistry.e621_id == next_post.e621_id).first()
+                existing_reg = db.query(SentRegistry).filter(SentRegistry.e621_id == sent_post.e621_id).first()
                 if not existing_reg:
                     db.add(SentRegistry(
-                        e621_id=next_post.e621_id,
-                        file_url=next_post.file_url,
-                        file_ext=next_post.file_ext,
+                        e621_id=sent_post.e621_id,
+                        file_url=sent_post.file_url,
+                        file_ext=sent_post.file_ext,
                         sent_at=now,
                     ))
                     db.commit()
@@ -610,22 +637,29 @@ async def _run_send_job() -> None:
                 db.rollback()
 
         if success:
-            if getattr(next_post, "source", "e621") != "ingest":
+            if not is_ingest:
                 cycle, idx = _get_or_create_cycle(db)
                 _advance_cycle(db, cycle, idx)
-            _remove_from_queue_order(db, next_post.id)
+
+            if is_group:
+                for p in group_posts:
+                    _remove_from_queue_order(db, p.id)
+            else:
+                _remove_from_queue_order(db, sent_post.id)
+
             _cache_next_post_id(db)
 
         _broadcast_sse(
             {
                 "event": "post_sent",
-                "post_id": next_post.id,
-                "e621_id": next_post.e621_id,
-                "file_ext": next_post.file_ext,
+                "post_id": sent_post.id,
+                "e621_id": sent_post.e621_id,
+                "file_ext": sent_post.file_ext,
                 "success": success,
                 "next_run_at": next_run.isoformat(),
                 "interval_seconds": interval,
                 "queue_composition": composition,
+                "is_group": is_group,
             }
         )
 

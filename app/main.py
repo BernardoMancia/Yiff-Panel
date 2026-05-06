@@ -59,7 +59,11 @@ from app.routes.api import router as api_router
 from app.routes.auth_routes import router as auth_router
 from app.routes.dashboard import router as dashboard_router
 
+import os as _os
+_os.makedirs("media_cache", exist_ok=True)
+
 app.include_router(api_router, prefix="/api")
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(dashboard_router)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/media_cache", StaticFiles(directory="media_cache"), name="media_cache")

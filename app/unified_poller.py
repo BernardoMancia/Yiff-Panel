@@ -49,10 +49,10 @@ async def poll_telegram_updates() -> None:
             await _process_reaction_updates(bot, db, reaction_updates)
 
         if message_updates and settings.TELEGRAM_INGEST_CHAT_ID:
-            from app.ingest_listener import _process_ingest_message
+            from app.ingest_listener import process_ingest_batch
             ingest_chat = str(settings.TELEGRAM_INGEST_CHAT_ID)
-            for update in message_updates:
-                await _process_ingest_message(bot, update.message, ingest_chat)
+            all_messages = [u.message for u in message_updates]
+            await process_ingest_batch(bot, all_messages, ingest_chat)
 
     except Exception as exc:
         logger.exception("Unified poller error: %s", exc)

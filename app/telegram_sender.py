@@ -5,7 +5,7 @@ import logging
 import random
 
 import aiohttp
-from telegram import Bot, InputFile, ReactionTypeEmoji
+from telegram import Bot, InputFile, InputMediaPhoto, InputMediaVideo, ReactionTypeEmoji
 from telegram.error import TelegramError
 
 from app.config import settings
@@ -175,6 +175,65 @@ class TelegramSender:
         except TelegramError as exc:
             logger.error("Failed to send local ingest post #%d: %s", post.id, exc)
             return False, None
+
+    async def send_media_group_posts(self, posts: list[Post]) -> tuple[bool, list[int]]:
+        import os
+        bot = self._get_bot()
+        chat_id = settings.TELEGRAM_CHAT_ID
+        media_items = []
+        file_handles = []
+
+        try:
+            for post in posts:
+                ext = (post.file_ext or "").lower()
+                filepath = post.file_url
+                if not filepath or not os.path.isfile(filepath):
+                    logger.warning("Skipping missing file for ingest post #%d: %s", post.id, filepath)
+                    continue
+
+                with open(filepath, "rb") as f:
+                    data = f.read()
+
+                buf = io.BytesIO(data)
+                if ext in _VIDEO_EXTS:
+                    input_file = InputFile(buf, filename=f"video.{ext}")
+                    media_items.append(InputMediaVideo(media=input_file))
+                else:
+                    input_file = InputFile(buf, filename=f"photo.{ext}")
+                    media_items.append(InputMediaPhoto(media=input_file))
+                file_handles.append((post, filepath))
+
+            if not media_items:
+                return False, []
+
+            sent_messages = await bot.send_media_group(
+                chat_id=chat_id,
+                media=media_items,
+                read_timeout=120,
+                write_timeout=120,
+                connect_timeout=30,
+            )
+
+            message_ids = [m.message_id for m in sent_messages]
+            logger.info(
+                "Sent media group (%d items) — msg_ids=%s",
+                len(sent_messages), message_ids,
+            )
+
+            if sent_messages:
+                await _react_to_message(bot, chat_id, sent_messages[0].message_id)
+
+            for post, filepath in file_handles:
+                try:
+                    os.remove(filepath)
+                except OSError:
+                    pass
+
+            return True, message_ids
+
+        except TelegramError as exc:
+            logger.error("Failed to send media group: %s", exc)
+            return False, []
 
 
 telegram_sender = TelegramSender()

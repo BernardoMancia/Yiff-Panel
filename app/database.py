@@ -46,6 +46,7 @@ class Post(Base):
     is_deleted = Column(Boolean, default=False)
     is_priority = Column(Boolean, default=False, index=True)
     source = Column(String(20), default="e621")
+    media_group_id = Column(String(100), nullable=True, index=True)
     message_id = Column(Integer, nullable=True)
     removed_by_reaction = Column(Boolean, default=False)
     logs = relationship("ScheduleLog", back_populates="post")
