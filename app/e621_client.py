@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import random
-from typing import Any
 
 import httpx
 
@@ -14,29 +13,36 @@ class E621Client:
     BASE_URL = "https://e621.net"
 
     def __init__(self) -> None:
-        pass
+        self._client: httpx.AsyncClient | None = None
 
-    def _build_client(self) -> httpx.AsyncClient:
-        auth = None
-        if settings.E621_USERNAME and settings.E621_API_KEY:
-            auth = (settings.E621_USERNAME, settings.E621_API_KEY)
-        return httpx.AsyncClient(
-            base_url=self.BASE_URL,
-            headers={"User-Agent": settings.user_agent},
-            auth=auth,
-            timeout=30.0,
-            follow_redirects=True,
-        )
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            auth = None
+            if settings.E621_USERNAME and settings.E621_API_KEY:
+                auth = (settings.E621_USERNAME, settings.E621_API_KEY)
+            self._client = httpx.AsyncClient(
+                base_url=self.BASE_URL,
+                headers={"User-Agent": settings.user_agent},
+                auth=auth,
+                timeout=30.0,
+                follow_redirects=True,
+            )
+        return self._client
 
-    async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        async with self._build_client() as client:
-            await asyncio.sleep(1.1)
-            response = await client.get(path, params=params)
-            response.raise_for_status()
-            return response.json()
+    async def close(self) -> None:
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
+    async def _get(self, path: str, params: dict | None = None) -> dict | list:
+        client = self._get_client()
+        await asyncio.sleep(1.1)
+        response = await client.get(path, params=params)
+        response.raise_for_status()
+        return response.json()
 
     async def fetch_posts(self, page: int = 1, limit: int = 100, custom_tags: str | None = None) -> list[dict]:
-        tags = custom_tags if custom_tags else settings.E621_TAGS
+        tags = custom_tags if custom_tags else ""
         data = await self._get(
             "/posts.json",
             params={"tags": tags, "limit": limit, "page": page},
@@ -49,32 +55,26 @@ class E621Client:
         return await self.fetch_posts(page=page, limit=limit, custom_tags=custom_tags)
 
     async def fetch_by_type(self, file_type: str, limit: int = 50, custom_tags: str | None = None) -> list[dict]:
-        if custom_tags:
-            if file_type == "gif":
-                tags = custom_tags.replace("order:random rating:e", "type:gif order:random rating:e")
-            elif file_type == "webm":
-                tags = custom_tags.replace("order:random rating:e", "type:webm order:random rating:e")
-            else:
-                return []
-        else:
-            if file_type == "gif":
-                tags = settings.E621_TAGS_GIF
-            elif file_type == "webm":
-                tags = settings.E621_TAGS_VIDEO
-            else:
-                return []
+        if file_type not in ("gif", "webm"):
+            return []
+
+        base = custom_tags.strip() if custom_tags else ""
+        type_tag = f"type:{file_type}"
+        if type_tag not in base:
+            base = f"{base} {type_tag}".strip()
+
         page = random.randint(1, 4)
-        async with self._build_client() as client:
-            await asyncio.sleep(1.1)
-            response = await client.get(
-                "/posts.json",
-                params={"tags": tags, "limit": limit, "page": page},
-            )
-            if response.status_code != 200:
-                return []
-            data = response.json()
-            posts = data.get("posts", []) if isinstance(data, dict) else []
-            return [p for p in posts if self._is_valid(p)]
+        client = self._get_client()
+        await asyncio.sleep(1.1)
+        response = await client.get(
+            "/posts.json",
+            params={"tags": base, "limit": limit, "page": page},
+        )
+        if response.status_code != 200:
+            return []
+        data = response.json()
+        posts = data.get("posts", []) if isinstance(data, dict) else []
+        return [p for p in posts if self._is_valid(p)]
 
     @staticmethod
     def _is_valid(post: dict) -> bool:

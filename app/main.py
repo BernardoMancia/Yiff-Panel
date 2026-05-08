@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import logging
-import logging.config
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.database import create_tables
+from app.database import SessionLocal, create_tables
 from app.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(
@@ -23,22 +23,25 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     create_tables()
-    from app.database import SessionLocal
-    from app.tag_manager import init_tags
-    from app.auth import init_admin
-    _db = SessionLocal()
+    db = SessionLocal()
     try:
-        init_tags(_db)
-        init_admin(_db)
+        from app.tag_manager import init_tags
+        from app.auth import init_admin
+        init_tags(db)
+        init_admin(db)
     finally:
-        _db.close()
-    import os
+        db.close()
+
     os.makedirs("media_cache", exist_ok=True)
+
     logger.info("Starting scheduler...")
     start_scheduler()
     yield
-    logger.info("Shutting down scheduler...")
+    logger.info("Shutting down...")
     stop_scheduler()
+
+    from app.e621_client import e621_client
+    await e621_client.close()
 
 
 app = FastAPI(
@@ -58,9 +61,6 @@ app.add_middleware(
 from app.routes.api import router as api_router
 from app.routes.auth_routes import router as auth_router
 from app.routes.dashboard import router as dashboard_router
-
-import os as _os
-_os.makedirs("media_cache", exist_ok=True)
 
 app.include_router(api_router, prefix="/api")
 app.include_router(auth_router, prefix="/api/auth")

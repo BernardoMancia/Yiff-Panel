@@ -7,21 +7,30 @@ from telegram.error import TelegramError
 
 from app.config import settings
 from app.database import SessionLocal
+from app.state_store import get_state, set_state
 
 logger = logging.getLogger(__name__)
 
+_bot_instance: Bot | None = None
+
+
+def _get_bot() -> Bot | None:
+    global _bot_instance
+    if not settings.TELEGRAM_BOT_TOKEN:
+        return None
+    if _bot_instance is None:
+        _bot_instance = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+    return _bot_instance
+
 
 async def poll_telegram_updates() -> None:
-    if not settings.TELEGRAM_BOT_TOKEN:
+    bot = _get_bot()
+    if bot is None:
         return
 
     db = SessionLocal()
     try:
-        bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
-
-        from app.scheduler import _get_state, _set_state
-
-        offset_str = _get_state(db, "tg_update_offset")
+        offset_str = get_state(db, "tg_update_offset")
         offset = int(offset_str) + 1 if offset_str else None
 
         try:
@@ -39,7 +48,7 @@ async def poll_telegram_updates() -> None:
             return
 
         last_id = updates[-1].update_id
-        _set_state(db, "tg_update_offset", str(last_id))
+        set_state(db, "tg_update_offset", str(last_id))
 
         reaction_updates = [u for u in updates if getattr(u, "message_reaction_count", None)]
         message_updates = [u for u in updates if u.message]

@@ -14,6 +14,18 @@ _KEY_REQUIRED = "tag_required"
 _KEY_OR = "tag_or"
 _KEY_BLACKLIST = "tag_blacklist"
 
+_DEFAULT_MANDATORY = ["male", "gay"]
+_DEFAULT_REQUIRED = ["knotted_penis", "cum_inflation"]
+_DEFAULT_OR = [
+    "feral", "animal_genitalia", "animal_penis",
+    "equine_penis", "equine_genitalia", "canine_genitalia",
+    "femboy", "knot",
+]
+_DEFAULT_BLACKLIST = [
+    "road", "machine", "car", "aircraft", "airplane", "radiation", "gore",
+    "vore", "imminent_vore", "anal_vore", "soft_vore", "diaper",
+]
+
 
 def _read(db: Session, key: str) -> list[str] | None:
     row = db.query(AppState).filter(AppState.key == key).first()
@@ -35,23 +47,12 @@ def _write(db: Session, key: str, tags: list[str]) -> None:
     db.commit()
 
 
-def _defaults_from_settings() -> tuple[list[str], list[str], list[str], list[str]]:
-    from app.config import settings
-    tokens = settings.E621_TAGS.split()
-    mandatory = ["male", "gay"]
-    required = [t for t in tokens if not t.startswith(("~", "-")) and ":" not in t and t not in mandatory]
-    or_tags = [t[1:] for t in tokens if t.startswith("~")]
-    blacklist = [t[1:] for t in tokens if t.startswith("-")]
-    return mandatory, required, or_tags, blacklist
-
-
 def init_tags(db: Session) -> None:
-    mandatory, required, or_tags, blacklist = _defaults_from_settings()
     for key, default in (
-        (_KEY_MANDATORY, mandatory),
-        (_KEY_REQUIRED, required),
-        (_KEY_OR, or_tags),
-        (_KEY_BLACKLIST, blacklist),
+        (_KEY_MANDATORY, _DEFAULT_MANDATORY),
+        (_KEY_REQUIRED, _DEFAULT_REQUIRED),
+        (_KEY_OR, _DEFAULT_OR),
+        (_KEY_BLACKLIST, _DEFAULT_BLACKLIST),
     ):
         if _read(db, key) is None:
             _write(db, key, default)
@@ -66,23 +67,22 @@ def init_tags(db: Session) -> None:
 
 
 def get_mandatory_tags(db: Session) -> list[str]:
-    return _read(db, _KEY_MANDATORY) or _defaults_from_settings()[0]
+    return _read(db, _KEY_MANDATORY) or _DEFAULT_MANDATORY
 
 
 def get_required_tags(db: Session) -> list[str]:
-    return _read(db, _KEY_REQUIRED) or _defaults_from_settings()[1]
+    return _read(db, _KEY_REQUIRED) or _DEFAULT_REQUIRED
 
 
 def get_or_tags(db: Session) -> list[str]:
-    return _read(db, _KEY_OR) or _defaults_from_settings()[2]
+    return _read(db, _KEY_OR) or _DEFAULT_OR
 
 
 def get_blacklist_tags(db: Session) -> list[str]:
-    return _read(db, _KEY_BLACKLIST) or _defaults_from_settings()[3]
+    return _read(db, _KEY_BLACKLIST) or _DEFAULT_BLACKLIST
 
 
 def build_query(db: Session, extra: str = "") -> str:
-    from app.database import AppState
     mandatory = get_mandatory_tags(db)
     required = get_required_tags(db)
     or_tags = get_or_tags(db)
@@ -90,10 +90,7 @@ def build_query(db: Session, extra: str = "") -> str:
 
     parts: list[str] = []
 
-    # Mandatory: todos com ~ → e621 exige pelo menos 1 do grupo OR
-    if mandatory:
-        parts += [f"~{t}" for t in mandatory]
-
+    parts += mandatory
     parts += required
     parts += [f"~{t}" for t in or_tags]
     parts += [f"-{t}" for t in blacklist]

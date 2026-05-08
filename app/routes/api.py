@@ -9,15 +9,28 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.database import AppState, Post, ScheduleLog, get_db
-from app.scheduler import analyze_queue_composition, subscribe_sse, unsubscribe_sse, get_ordered_queue
+from app.auth import get_user_from_token
+from app.config import settings
+from app.database import AppState, Post, ScheduleLog, SentRegistry, TagSuggestion, get_db
+from app.queue_manager import analyze_queue_composition, get_ordered_queue
+from app.state_store import subscribe_sse, unsubscribe_sse
+from app.tag_manager import (
+    add_tag,
+    get_blacklist_tags,
+    get_mandatory_tags,
+    get_or_tags,
+    get_required_tags,
+    remove_tag,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+_refill_lock = asyncio.Lock()
+_refill_result: dict | None = None
+
 
 def _require_admin(request: Request, db: Session = Depends(get_db)):
-    from app.auth import get_user_from_token
     token = request.headers.get("X-Admin-Token") or request.cookies.get("admin_token")
     user = get_user_from_token(db, token)
     if not user:
@@ -68,8 +81,7 @@ def get_queue(limit: int = 10, db: Session = Depends(get_db)):
         posts = get_ordered_queue(db, limit=limit)
         return [_serialize_post(p) for p in posts]
     except Exception as exc:
-        import logging as _log
-        _log.getLogger(__name__).error("get_ordered_queue failed, falling back to FIFO: %s", exc)
+        logger.error("get_ordered_queue failed, falling back to FIFO: %s", exc)
         posts = (
             db.query(Post)
             .filter(Post.status == "queued", Post.is_deleted == False)
@@ -92,7 +104,6 @@ def get_post_by_id(post_id: int, db: Session = Depends(get_db)):
 def get_next(db: Session = Depends(get_db)):
     next_post = None
 
-    # Tenta usar o ID pré-selecionado pelo ciclo
     cached_id_row = db.query(AppState).filter(AppState.key == "next_post_id").first()
     if cached_id_row and cached_id_row.value:
         try:
@@ -105,7 +116,6 @@ def get_next(db: Session = Depends(get_db)):
         except (ValueError, Exception):
             pass
 
-    # Fallback: primeiro da fila se cache inválido
     if next_post is None:
         next_post = (
             db.query(Post)
@@ -128,20 +138,17 @@ def get_next(db: Session = Depends(get_db)):
         except ValueError:
             pass
 
-    from app.config import settings as _s
     return {
         "next_post": _serialize_post(next_post) if next_post else None,
         "next_run_at": next_run_at,
         "seconds_remaining": seconds_remaining,
-        "interval_min": _s.MIN_INTERVAL_SECONDS,
-        "interval_max": _s.MAX_INTERVAL_SECONDS,
+        "interval_min": settings.MIN_INTERVAL_SECONDS,
+        "interval_max": settings.MAX_INTERVAL_SECONDS,
     }
 
 
 @router.get("/stats")
 def get_stats(db: Session = Depends(get_db)):
-    from datetime import datetime, timezone
-    from app.database import SentRegistry
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
@@ -214,8 +221,6 @@ async def trigger_now(request: Request, db: Session = Depends(get_db), _=Depends
 
 @router.get("/config")
 def get_config(request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
-    from app.config import settings
-    from app.tag_manager import get_mandatory_tags, get_required_tags, get_or_tags, get_blacklist_tags
     return {
         "mandatory_tags": get_mandatory_tags(db),
         "required_tags": get_required_tags(db),
@@ -228,7 +233,6 @@ def get_config(request: Request, db: Session = Depends(get_db), _=Depends(_requi
 
 @router.post("/config/tags")
 def update_tags(body: dict, request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
-    from app.tag_manager import add_tag, remove_tag
     action = body.get("action")
     tag_type = body.get("type")
     tag = (body.get("tag") or "").strip().lower().lstrip("~-")
@@ -248,13 +252,8 @@ def update_tags(body: dict, request: Request, db: Session = Depends(get_db), _=D
         return {"ok": False, "error": str(e)}
 
 
-_refill_running = False
-_refill_result: dict | None = None
-
-
 async def _do_refill_after_reset() -> None:
-    global _refill_running, _refill_result
-    _refill_running = True
+    global _refill_result
     _refill_result = None
     db = None
     try:
@@ -268,7 +267,6 @@ async def _do_refill_after_reset() -> None:
         _refill_result = {"ok": False, "error": str(exc)}
         logger.error("Post-reset refill failed: %s", exc)
     finally:
-        _refill_running = False
         if db:
             db.close()
 
@@ -280,7 +278,9 @@ async def reset_queue(
     db: Session = Depends(get_db),
     _=Depends(_require_admin),
 ):
-    global _refill_running, _refill_result
+    global _refill_result
+    if _refill_lock.locked():
+        return {"ok": False, "error": "Refill already in progress"}
     deleted = (
         db.query(Post)
         .filter(Post.status == "queued", Post.is_deleted == False)
@@ -292,16 +292,20 @@ async def reset_queue(
     )
     db.commit()
     logger.warning("Admin reset queue: %d posts marked as reset.", deleted)
-    _refill_running = True
     _refill_result = None
-    background_tasks.add_task(_do_refill_after_reset)
+
+    async def _locked_refill():
+        async with _refill_lock:
+            await _do_refill_after_reset()
+
+    background_tasks.add_task(_locked_refill)
     return {"ok": True, "removed_from_queue": deleted, "refilling": True}
 
 
 @router.get("/admin/refill-status")
 def refill_status(request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
     return {
-        "running": _refill_running,
+        "running": _refill_lock.locked(),
         "result": _refill_result,
         "queue_count": db.query(Post).filter(Post.status == "queued", Post.is_deleted == False).count(),
     }
@@ -309,7 +313,6 @@ def refill_status(request: Request, db: Session = Depends(get_db), _=Depends(_re
 
 @router.post("/suggestions")
 def submit_suggestion(body: dict, db: Session = Depends(get_db)):
-    from app.database import TagSuggestion
     tag = (body.get("tag") or "").strip().lower().lstrip("~-")
     if not tag or len(tag) < 2:
         return {"ok": False, "error": "Tag inválida (mín. 2 caracteres)"}
@@ -328,16 +331,12 @@ def submit_suggestion(body: dict, db: Session = Depends(get_db)):
 
 @router.get("/suggestions")
 def list_suggestions(request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
-    from app.database import TagSuggestion
     rows = db.query(TagSuggestion).filter(TagSuggestion.status == "pending").order_by(TagSuggestion.id.desc()).all()
     return [{"id": r.id, "tag": r.tag, "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]
 
 
 @router.post("/suggestions/{suggestion_id}/accept")
 def accept_suggestion(suggestion_id: int, request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
-    from app.database import TagSuggestion
-    from app.tag_manager import add_tag
-    from datetime import datetime, timezone
     row = db.query(TagSuggestion).filter(TagSuggestion.id == suggestion_id).first()
     if not row:
         return {"ok": False, "error": "Sugestão não encontrada"}
@@ -350,8 +349,6 @@ def accept_suggestion(suggestion_id: int, request: Request, db: Session = Depend
 
 @router.post("/suggestions/{suggestion_id}/reject")
 def reject_suggestion(suggestion_id: int, request: Request, db: Session = Depends(get_db), _=Depends(_require_admin)):
-    from app.database import TagSuggestion
-    from datetime import datetime, timezone
     row = db.query(TagSuggestion).filter(TagSuggestion.id == suggestion_id).first()
     if not row:
         return {"ok": False, "error": "Sugestão não encontrada"}

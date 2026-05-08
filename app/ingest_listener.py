@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import logging
 import os
 from collections import defaultdict
@@ -11,6 +10,8 @@ from telegram.error import TelegramError
 
 from app.config import settings
 from app.database import AppState, Post, SessionLocal
+from app.queue_manager import prepend_to_queue_order
+from app.state_store import broadcast_sse, get_state
 
 logger = logging.getLogger(__name__)
 
@@ -40,27 +41,8 @@ def _next_ingest_id(db) -> int:
     return -1
 
 
-def _prepend_to_queue_order(db, post_ids: list[int]) -> None:
-    import json as _json
-    row = db.query(AppState).filter(AppState.key == "queue_order").first()
-    if row and row.value:
-        try:
-            ids = _json.loads(row.value)
-            ids = post_ids + ids
-            row.value = _json.dumps(ids)
-        except Exception:
-            row.value = _json.dumps(post_ids)
-    else:
-        if row:
-            row.value = _json.dumps(post_ids)
-        else:
-            db.add(AppState(key="queue_order", value=_json.dumps(post_ids)))
-    db.commit()
-
-
 def _estimate_send_time(db, queue_position: int) -> str:
-    from app.scheduler import _get_state
-    next_run_str = _get_state(db, "next_run_at")
+    next_run_str = get_state(db, "next_run_at")
     avg_interval = (settings.MIN_INTERVAL_SECONDS + settings.MAX_INTERVAL_SECONDS) / 2
 
     if next_run_str:
@@ -184,7 +166,7 @@ async def _process_single(bot: Bot, message) -> None:
         db.commit()
         db.refresh(post)
 
-        _prepend_to_queue_order(db, [post.id])
+        prepend_to_queue_order(db, [post.id])
 
         cached_row = db.query(AppState).filter(AppState.key == "next_post_id").first()
         if cached_row:
@@ -214,8 +196,7 @@ async def _process_single(bot: Bot, message) -> None:
         except TelegramError as exc:
             logger.warning("Could not send confirmation: %s", exc)
 
-        from app.scheduler import _broadcast_sse
-        _broadcast_sse({"event": "priority_added", "post_id": post.id})
+        broadcast_sse({"event": "priority_added", "post_id": post.id})
 
         logger.info("Ingest single: %s (%d bytes) as post #%d", filename, byte_count, post.id)
 
@@ -270,7 +251,7 @@ async def _process_group(bot: Bot, group_id: str, messages: list) -> None:
         if not created_ids:
             return
 
-        _prepend_to_queue_order(db, created_ids)
+        prepend_to_queue_order(db, created_ids)
 
         cached_row = db.query(AppState).filter(AppState.key == "next_post_id").first()
         if cached_row:
@@ -302,8 +283,7 @@ async def _process_group(bot: Bot, group_id: str, messages: list) -> None:
         except TelegramError as exc:
             logger.warning("Could not send group confirmation: %s", exc)
 
-        from app.scheduler import _broadcast_sse
-        _broadcast_sse({"event": "priority_added", "post_id": created_ids[0], "group_size": len(created_ids)})
+        broadcast_sse({"event": "priority_added", "post_id": created_ids[0], "group_size": len(created_ids)})
 
         logger.info(
             "Ingest group '%s': %d files saved as posts %s",
