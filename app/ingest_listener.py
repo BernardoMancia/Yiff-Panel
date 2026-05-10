@@ -58,7 +58,17 @@ def _estimate_send_time(db, queue_position: int) -> str:
     estimated = base + timedelta(seconds=avg_interval * max(0, queue_position - 1))
     utc_minus_3 = timezone(timedelta(hours=-3))
     local_time = estimated.astimezone(utc_minus_3)
-    return local_time.strftime("%d/%m às %H:%M")
+
+    delta = estimated - datetime.now(timezone.utc)
+    total_minutes = max(1, int(delta.total_seconds() / 60))
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    if hours > 0:
+        relative = f"~{hours}h{minutes:02d}min"
+    else:
+        relative = f"~{minutes}min"
+
+    return f"{local_time.strftime('%d/%m às %H:%M')} (em {relative})"
 
 
 def _extract_file_info(message) -> tuple[str | None, str | None, int]:

@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.config import settings
 from app.database import SessionLocal, create_tables
 from app.scheduler import start_scheduler, stop_scheduler
 
@@ -36,8 +38,40 @@ async def lifespan(app: FastAPI):
 
     logger.info("Starting scheduler...")
     start_scheduler()
+
+    if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_INGEST_CHAT_ID:
+        try:
+            from telegram import Bot
+            bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+            utc_minus_3 = timezone(timedelta(hours=-3))
+            now_br = datetime.now(utc_minus_3)
+            await bot.send_message(
+                chat_id=settings.TELEGRAM_INGEST_CHAT_ID,
+                text=(
+                    "🟢 Auto-Yiff Online\n"
+                    f"⏱ {now_br.strftime('%d/%m/%Y às %H:%M')}\n"
+                    "📤 Envios automáticos ativados\n"
+                    "📎 Envie mídias aqui para adicionar à fila prioritária"
+                ),
+            )
+            logger.info("Online notification sent to ingest group")
+        except Exception as exc:
+            logger.warning("Could not send online notification: %s", exc)
+
     yield
     logger.info("Shutting down...")
+
+    if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_INGEST_CHAT_ID:
+        try:
+            from telegram import Bot
+            bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+            await bot.send_message(
+                chat_id=settings.TELEGRAM_INGEST_CHAT_ID,
+                text="🔴 Auto-Yiff Offline\n⏳ O bot será reiniciado em breve.",
+            )
+        except Exception:
+            pass
+
     stop_scheduler()
 
     from app.e621_client import e621_client
